@@ -1,0 +1,10 @@
+[package]
+name = "instrument"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+winit = "0.29.15"
+pixels = "0.15.0"
+rand = "0.9.1"
+rusttype = "0.9.3"
