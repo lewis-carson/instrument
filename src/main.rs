@@ -344,7 +344,7 @@ fn draw_dial(frame: &mut [u8], width: usize, height: usize, _elapsed: f64, min_v
     let label_y = (height as f64 * config::READOUT_Y_FACTOR) as i32;
 
     // Load font once (reuse from above if possible)
-    let font_data = include_bytes!("BerkeleyMono-Regular.otf");
+    let font_data = config::FONT_DATA; // Use the included font data from config.rs
     let font = Font::try_from_vec(font_data.to_vec()).expect("Error loading font");
 
     // Draw integer part in big font
@@ -373,6 +373,25 @@ fn draw_dial(frame: &mut [u8], width: usize, height: usize, _elapsed: f64, min_v
     let frac_x = label_x + int_width / 2 + 28;
     let frac_y = label_y + 2;
     draw_text(frame, width, height, frac_x, frac_y, &frac_str, &font, scale_small, text_color);
+
+    // Draw the box around the readout
+    let box_padding = config::READOUT_BOX_PADDING;
+    let box_thickness = config::READOUT_BOX_THICKNESS;
+    let box_color = if is_out_of_range { (0xff, 0x00, 0x00) } else { (0x00, 0x00, 0x00) }; // Red if out of range
+
+    let font_size = (config::READOUT_BIG_FONT_SIZE / 11.0) as i32;
+    let box_left = label_x - box_padding - font_size * int_str.len() as i32; // Adjust left padding based on integer string length
+    let box_top = label_y - box_padding;
+    let box_right = frac_x + box_padding + 5; // Add slight adjustment for better alignment
+    let box_bottom = frac_y + box_padding; // Add slight adjustment for better alignment
+
+    // Draw top and bottom lines
+    draw_thick_line_aa(frame, width, box_left, box_top, box_right, box_top, box_thickness as f32, box_color.0, box_color.1, box_color.2);
+    draw_thick_line_aa(frame, width, box_left, box_bottom, box_right, box_bottom, box_thickness as f32, box_color.0, box_color.1, box_color.2);
+
+    // Draw left and right lines
+    draw_thick_line_aa(frame, width, box_left, box_top, box_left, box_bottom, box_thickness as f32, box_color.0, box_color.1, box_color.2);
+    draw_thick_line_aa(frame, width, box_right, box_top, box_right, box_bottom, box_thickness as f32, box_color.0, box_color.1, box_color.2);
 
     // Add a red exclamation mark in the middle of the dial when out of range
     if is_out_of_range {

@@ -14,10 +14,13 @@ pub const NEEDLE_CROSSBAR_LENGTH: f64 = 24.0; // Length of the crossbar at the n
 pub const NEEDLE_CROSSBAR_THICKNESS: f32 = 4.0; // Thickness of the crossbar at the needle base
 pub const NEEDLE_WIDTH: f32 = 4.0; // Width of the needle
 
-pub const READOUT_X_FACTOR: f64 = 0.72; // X position factor for the readout (relative to width)
-pub const READOUT_Y_FACTOR: f64 = 0.80; // Y position factor for the readout (relative to height)
+pub const READOUT_X_FACTOR: f64 = 0.69; // X position factor for the readout (relative to width)
+pub const READOUT_Y_FACTOR: f64 = 0.75; // Y position factor for the readout (relative to height)
 pub const READOUT_BIG_FONT_SIZE: f32 = 54.0; // Font size for the integer part of the readout
 pub const READOUT_SMALL_FONT_SIZE: f32 = 28.0; // Font size for the fractional part of the readout
+
+pub const READOUT_BOX_PADDING: i32 = 30; // Padding around the readout box
+pub const READOUT_BOX_THICKNESS: f32 = 4.0; // Thickness of the readout box lines
 
 pub const DIAL_NUMBERS_FONT_SIZE: f32 = 30.0; // Font size for the dial numbers
 pub const TICKS_TO_NUMBERS_DISTANCE: f64 = 30.0; // Distance between the ticks and the numbers on the dial
