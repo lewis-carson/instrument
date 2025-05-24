@@ -171,7 +171,7 @@ impl Needle {
         let needle_length = dial.r as f64 * config::NEEDLE_LENGTH_FACTOR;
         let nx = (dial.cx as f64 + angle.cos() * needle_length) as i32;
         let ny = (dial.cy as f64 + angle.sin() * needle_length) as i32;
-        // Update the needle color to turn red when out of range
+
         let needle_color = if is_out_of_range { (0xff, 0x00, 0x00) } else { (0x00, 0x00, 0x00) };
         draw_thick_line_tapered_aa(frame, width, dial.cx, dial.cy, nx, ny, config::NEEDLE_WIDTH, needle_color.0, needle_color.1, needle_color.2);
 
@@ -181,15 +181,23 @@ impl Needle {
         let back_y = (dial.cy as f64 - angle.sin() * back_length) as i32;
         draw_thick_line_aa(frame, width, dial.cx, dial.cy, back_x, back_y, config::NEEDLE_WIDTH, needle_color.0, needle_color.1, needle_color.2);
 
-        // Draw the needle's crossbar
-        let crossbar_length = config::NEEDLE_CROSSBAR_LENGTH;
-        let crossbar_thickness = config::NEEDLE_CROSSBAR_THICKNESS;
-        let crossbar_angle = angle + std::f64::consts::FRAC_PI_2; // Perpendicular to the needle
-        let crossbar_x1 = (dial.cx as f64 + crossbar_angle.cos() * (crossbar_length / 2.0)) as i32;
-        let crossbar_y1 = (dial.cy as f64 + crossbar_angle.sin() * (crossbar_length / 2.0)) as i32;
-        let crossbar_x2 = (dial.cx as f64 - crossbar_angle.cos() * (crossbar_length / 2.0)) as i32;
-        let crossbar_y2 = (dial.cy as f64 - crossbar_angle.sin() * (crossbar_length / 2.0)) as i32;
-        draw_thick_line_aa(frame, width, crossbar_x1, crossbar_y1, crossbar_x2, crossbar_y2, crossbar_thickness, needle_color.0, needle_color.1, needle_color.2);
+        // Draw the needle's crossbar or dot
+        match config::DEFAULT_CROSSBAR_TYPE {
+            config::CrossbarType::BAR => {
+                let crossbar_length = config::NEEDLE_CROSSBAR_LENGTH;
+                let crossbar_thickness = config::NEEDLE_CROSSBAR_THICKNESS;
+                let crossbar_angle = angle + std::f64::consts::FRAC_PI_2; // Perpendicular to the needle
+                let crossbar_x1 = (dial.cx as f64 + crossbar_angle.cos() * (crossbar_length / 2.0)) as i32;
+                let crossbar_y1 = (dial.cy as f64 + crossbar_angle.sin() * (crossbar_length / 2.0)) as i32;
+                let crossbar_x2 = (dial.cx as f64 - crossbar_angle.cos() * (crossbar_length / 2.0)) as i32;
+                let crossbar_y2 = (dial.cy as f64 - crossbar_angle.sin() * (crossbar_length / 2.0)) as i32;
+                draw_thick_line_aa(frame, width, crossbar_x1, crossbar_y1, crossbar_x2, crossbar_y2, crossbar_thickness, needle_color.0, needle_color.1, needle_color.2);
+            }
+            config::CrossbarType::DOT => {
+                let dot_radius = config::DOT_RADIUS as i32;
+                draw_circle(frame, width, dial.cx, dial.cy, dot_radius, needle_color.0, needle_color.1, needle_color.2);
+            }
+        }
     }
 }
 
@@ -478,6 +486,26 @@ fn draw_text(frame: &mut [u8], width: usize, height: usize, x: i32, y: i32, text
                     set_pixel(frame, width, px as usize, py as usize, color.0, color.1, color.2, v as f32); // Set text color to black
                 }
             });
+        }
+    }
+}
+
+fn draw_circle(frame: &mut [u8], width: usize, cx: i32, cy: i32, radius: i32, r: u8, g: u8, b: u8) {
+    for y in -radius..=radius {
+        for x in -radius..=radius {
+            let dist = ((x * x + y * y) as f64).sqrt();
+            let aa = if dist > radius as f64 {
+                1.0 - (dist - radius as f64).min(1.0)
+            } else {
+                1.0
+            };
+            if dist <= radius as f64 + 1.0 && aa > 0.0 {
+                let px = cx + x;
+                let py = cy + y;
+                if px >= 0 && py >= 0 && (px as usize) < width && (py as usize) < frame.len() / (width * 4) {
+                    set_pixel(frame, width, px as usize, py as usize, r, g, b, aa as f32);
+                }
+            }
         }
     }
 }
