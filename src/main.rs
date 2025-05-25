@@ -1,4 +1,5 @@
 mod config;
+mod mini_dial;
 
 use pixels::{Pixels, SurfaceTexture};
 use rand::Rng;
@@ -322,6 +323,16 @@ impl Dial {
         let arc_span = std::f64::consts::PI * 1.5;
         let start_angle = std::f64::consts::FRAC_PI_2;
         Self { cx, cy, r, thickness: config::DIAL_THICKNESS, arc_span, start_angle }
+    }
+
+    fn new_complication(width: usize, height: usize) -> Self {
+        // Create a smaller dial for the needle2 complication
+        let r = ((width.min(height) as f64) / config::COMPLICATION_SIZE) as i32 - mini_dial::DIAL_MARGIN; // Much smaller radius
+        let cx = width as i32 / 2; // Center horizontally
+        let cy = r + mini_dial::DIAL_MARGIN + config::COMPLICATION_SHIFT; // Position in top middle with configurable offset
+        let arc_span = std::f64::consts::PI * 1.5;
+        let start_angle = std::f64::consts::FRAC_PI_2;
+        Self { cx, cy, r, thickness: mini_dial::DIAL_THICKNESS, arc_span, start_angle }
     }
 
     fn draw_with_highlight(&self, canvas: &mut Canvas, range: (f64, f64), color: (u8, u8, u8), highlight_range: Option<(f64, f64)>) {
@@ -728,6 +739,130 @@ fn build_needle_commands(scene: &mut Scene, needle: &Needle, dial: &Dial, color:
     }
 }
 
+fn build_complication_dial_commands(scene: &mut Scene, dial: &Dial, range: (f64, f64), color: (u8, u8, u8)) {
+    // Add main dial arc using mini_dial constants
+    scene.add_command(DrawCommand::Arc {
+        cx: dial.cx,
+        cy: dial.cy,
+        r: dial.r,
+        thickness: dial.thickness,
+        start_angle: dial.start_angle,
+        arc_span: dial.arc_span,
+        color,
+    });
+    
+    // Add ticks and labels using mini_dial constants
+    for i in 0..mini_dial::NUM_TICKS {
+        let t = i as f64 / (mini_dial::NUM_TICKS as f64 - 1.0);
+        let angle = dial.start_angle + dial.arc_span * t;
+        
+        // Major tick
+        scene.add_command(DrawCommand::Tick {
+            cx: dial.cx,
+            cy: dial.cy,
+            r: dial.r,
+            angle,
+            length: mini_dial::TICK_LENGTH,
+            thickness: mini_dial::TICK_THICKNESS,
+            color,
+        });
+        
+        // Minor ticks
+        if i < mini_dial::NUM_TICKS - 1 {
+            for j in 1..=mini_dial::MINOR_TICKS_PER_INTERVAL {
+                let minor_t = t + (j as f64 / (mini_dial::MINOR_TICKS_PER_INTERVAL as f64 * (mini_dial::NUM_TICKS as f64 - 1.0)));
+                let minor_angle = dial.start_angle + dial.arc_span * minor_t;
+                scene.add_command(DrawCommand::Tick {
+                    cx: dial.cx,
+                    cy: dial.cy,
+                    r: dial.r,
+                    angle: minor_angle,
+                    length: mini_dial::MINOR_TICK_LENGTH,
+                    thickness: mini_dial::MINOR_TICK_THICKNESS,
+                    color,
+                });
+            }
+        }
+        
+        // Number labels with smaller font
+        let label_radius = dial.r as f64 - mini_dial::TICK_LENGTH as f64 - mini_dial::TICKS_TO_NUMBERS_DISTANCE;
+        let label_x = dial.cx as f64 + angle.cos() * label_radius;
+        let label_y = dial.cy as f64 + angle.sin() * label_radius;
+        let value = range.0 + t * (range.1 - range.0);
+        let value_str = format!("{}", value.round() as i64);
+        scene.add_command(DrawCommand::Text {
+            x: label_x as i32,
+            y: label_y as i32,
+            text: value_str,
+            font_size: mini_dial::DIAL_NUMBERS_FONT_SIZE,
+            color,
+        });
+    }
+}
+
+fn build_complication_needle_commands(scene: &mut Scene, needle: &Needle, dial: &Dial, color: (u8, u8, u8)) {
+    let angle = dial.start_angle + dial.arc_span * needle.pos;
+    let needle_length = dial.r as f64 * mini_dial::NEEDLE_LENGTH_FACTOR;
+    let nx = (dial.cx as f64 + angle.cos() * needle_length) as i32;
+    let ny = (dial.cy as f64 + angle.sin() * needle_length) as i32;
+
+    // Main needle line using mini_dial constants
+    scene.add_command(DrawCommand::NeedleLine {
+        x0: dial.cx,
+        y0: dial.cy,
+        x1: nx,
+        y1: ny,
+        thickness: mini_dial::NEEDLE_WIDTH,
+        tapered: true,
+        color,
+    });
+
+    // Draw the needle's back extension using mini_dial constants
+    let back_length = mini_dial::NEEDLE_BACK_LENGTH;
+    let back_x = (dial.cx as f64 - angle.cos() * back_length) as i32;
+    let back_y = (dial.cy as f64 - angle.sin() * back_length) as i32;
+    scene.add_command(DrawCommand::NeedleLine {
+        x0: dial.cx,
+        y0: dial.cy,
+        x1: back_x,
+        y1: back_y,
+        thickness: mini_dial::NEEDLE_WIDTH,
+        tapered: false,
+        color,
+    });
+
+    // Draw the needle's crossbar or dot using mini_dial constants
+    match mini_dial::DEFAULT_CROSSBAR_TYPE {
+        mini_dial::CrossbarType::BAR => {
+            let crossbar_length = mini_dial::NEEDLE_CROSSBAR_LENGTH;
+            let crossbar_thickness = mini_dial::NEEDLE_CROSSBAR_THICKNESS;
+            let crossbar_angle = angle + std::f64::consts::FRAC_PI_2; // Perpendicular to the needle
+            let crossbar_x1 = (dial.cx as f64 + crossbar_angle.cos() * (crossbar_length / 2.0)) as i32;
+            let crossbar_y1 = (dial.cy as f64 + crossbar_angle.sin() * (crossbar_length / 2.0)) as i32;
+            let crossbar_x2 = (dial.cx as f64 - crossbar_angle.cos() * (crossbar_length / 2.0)) as i32;
+            let crossbar_y2 = (dial.cy as f64 - crossbar_angle.sin() * (crossbar_length / 2.0)) as i32;
+            scene.add_command(DrawCommand::NeedleLine {
+                x0: crossbar_x1,
+                y0: crossbar_y1,
+                x1: crossbar_x2,
+                y1: crossbar_y2,
+                thickness: crossbar_thickness,
+                tapered: false,
+                color,
+            });
+        }
+        mini_dial::CrossbarType::DOT => {
+            let dot_radius = mini_dial::DOT_RADIUS as i32;
+            scene.add_command(DrawCommand::Circle {
+                cx: dial.cx,
+                cy: dial.cy,
+                radius: dot_radius,
+                color,
+            });
+        }
+    }
+}
+
 fn build_readout_commands(scene: &mut Scene, canvas: &Canvas, value: f64, color: (u8, u8, u8)) {
     let value_int = value.trunc() as i32;
     let value_frac = ((value.fract() * 1000.0).round() as u32).min(999);
@@ -920,7 +1055,16 @@ fn render_instrument(canvas: &mut Canvas, state: &AppState) {
         } else { 
             (0x00, 0x7f, 0xff) // Blue for needle2
         };
-        build_needle_commands(&mut scene, needle, &dial, needle_color);
+        
+        if config::NEEDLE2_USE_COMPLICATION {
+            // Draw needle2 on a smaller complication dial in the top middle
+            let complication_dial = Dial::new_complication(canvas.width, canvas.height);
+            build_complication_dial_commands(&mut scene, &complication_dial, (state.min_value, state.max_value), (0x00, 0x00, 0x00)); // Black dial
+            build_complication_needle_commands(&mut scene, needle, &complication_dial, (0x00, 0x00, 0x00));
+        } else {
+            // Draw needle2 on the main dial (original behavior)
+            build_needle_commands(&mut scene, needle, &dial, needle_color);
+        }
     }
     
     // Draw readout if readout value exists
@@ -969,7 +1113,7 @@ fn calculate_text_width(text: &str, font: &Font, scale: Scale) -> i32 {
     let (min_x, max_x, _, _) = glyphs.iter().filter_map(|g| g.pixel_bounding_box()).fold(
         (i32::MAX, i32::MIN, i32::MAX, i32::MIN),
         |(min_x, max_x, min_y, max_y), bb| {
-            (min_x.min(bb.min.x), max_x.max(bb.max.x), min_y, max_y)
+            (min_x.min(bb.min.x), max_x.max(bb.max.x), min_y.min(bb.min.y), max_y.max(bb.max.y))
         },
     );
     if min_x < max_x { max_x - min_x } else { 0 }
