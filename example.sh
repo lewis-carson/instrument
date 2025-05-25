@@ -1,8 +1,19 @@
 #!/bin/bash
+# Sine wave demonstration
+t=0
+sp=40
 while true; do
-    # Get the RAM usage percentage of the system
-    ram_usage=$(vm_stat | awk '/Pages active/ {active=$3} /Pages speculative/ {speculative=$3} /Pages wired down/ {wired=$4} /Pages free/ {free=$3} END {used=(active+speculative+wired)*4096; total=(active+speculative+wired+free)*4096; print (used/total)*100}')
-    # Output the RAM usage as an integer
-    echo ${ram_usage} 
-    sleep 0.1
-done | cargo run --release -- --title "RAM Usage" --highlight 75 100 --range 0 100 --
+    # Calculate sine wave values
+    # needle1: main sine wave (0-100 range)
+    needle1=$(echo "scale=2; 49 + $sp * s($t)" | bc -l)
+    
+    # readout: shows the primary needle value
+    readout=$(echo "scale=1; $needle1" | bc -l)
+    
+    echo "needle1=${needle1} readout=${readout}"
+    
+    # Increment time for smooth animation
+    t=$(echo "scale=4; $t + 0.05" | bc -l)
+    
+    sleep 0.5
+done | cargo run --release -- --title "Sine Wave Demo" --range 0 100 --highlight 20 30 --

@@ -13,6 +13,111 @@ use std::sync::mpsc::{self, Receiver};
 use std::thread;
 use std::io::{self, BufRead};
 use std::env;
+use std::collections::HashMap;
+
+// ============================================================================
+// RETAINED MODE ABSTRACTIONS
+// ============================================================================
+
+#[derive(Clone, Debug)]
+enum DrawCommand {
+    Clear((u8, u8, u8)),
+    Arc {
+        cx: i32, cy: i32, r: i32, thickness: i32,
+        start_angle: f64, arc_span: f64,
+        color: (u8, u8, u8),
+    },
+    HighlightBand {
+        cx: i32, cy: i32, r: i32,
+        start_angle: f64, end_angle: f64,
+        inner_radius: f64, outer_radius: f64,
+    },
+    Tick {
+        cx: i32, cy: i32, r: i32,
+        angle: f64, length: i32, thickness: f32,
+        color: (u8, u8, u8),
+    },
+    Text {
+        x: i32, y: i32, text: String,
+        font_size: f32, color: (u8, u8, u8),
+    },
+    NeedleLine {
+        x0: i32, y0: i32, x1: i32, y1: i32,
+        thickness: f32, tapered: bool,
+        color: (u8, u8, u8),
+    },
+    Circle {
+        cx: i32, cy: i32, radius: i32,
+        color: (u8, u8, u8),
+    },
+}
+
+struct Scene {
+    commands: Vec<DrawCommand>,
+    width: usize,
+    height: usize,
+}
+
+impl Scene {
+    fn new(width: usize, height: usize) -> Self {
+        Self {
+            commands: Vec::new(),
+            width,
+            height,
+        }
+    }
+
+    fn clear(&mut self) {
+        self.commands.clear();
+    }
+
+    fn add_command(&mut self, command: DrawCommand) {
+        self.commands.push(command);
+    }
+
+    fn render(&self, canvas: &mut Canvas) {
+        for command in &self.commands {
+            match command {
+                DrawCommand::Clear(color) => {
+                    canvas.clear(*color);
+                }
+                DrawCommand::Arc { cx, cy, r, thickness, start_angle, arc_span, color } => {
+                    render_arc_immediate(canvas, *cx, *cy, *r, *thickness, *start_angle, *arc_span, *color);
+                }
+                DrawCommand::HighlightBand { cx, cy, r, start_angle, end_angle, inner_radius, outer_radius } => {
+                    render_highlight_band_immediate(canvas, *cx, *cy, *r, *start_angle, *end_angle, *inner_radius, *outer_radius);
+                }
+                DrawCommand::Tick { cx, cy, r, angle, length, thickness, color } => {
+                    let outer_x = *cx as f64 + angle.cos() * (*r as f64 - 1.0);
+                    let outer_y = *cy as f64 + angle.sin() * (*r as f64 - 1.0);
+                    let inner_x = *cx as f64 + angle.cos() * (*r as f64 - *length as f64);
+                    let inner_y = *cy as f64 + angle.sin() * (*r as f64 - *length as f64);
+                    draw_thick_line_aa(
+                        canvas.frame, canvas.width,
+                        inner_x.round() as i32, inner_y.round() as i32,
+                        outer_x.round() as i32, outer_y.round() as i32,
+                        *thickness, color.0, color.1, color.2
+                    );
+                }
+                DrawCommand::Text { x, y, text, font_size, color } => {
+                    let font = Font::try_from_vec(config::FONT_DATA.to_vec()).expect("Error loading font");
+                    let scale = Scale::uniform(*font_size);
+                    draw_text(canvas.frame, canvas.width, canvas.height, *x, *y, text, &font, scale, *color);
+                }
+                DrawCommand::NeedleLine { x0, y0, x1, y1, thickness, tapered, color } => {
+                    if *tapered {
+                        draw_thick_line_tapered_aa(canvas.frame, canvas.width, *x0, *y0, *x1, *y1, *thickness, color.0, color.1, color.2);
+                    } else {
+                        draw_thick_line_aa(canvas.frame, canvas.width, *x0, *y0, *x1, *y1, *thickness, color.0, color.1, color.2);
+                    }
+                }
+                DrawCommand::Circle { cx, cy, radius, color } => {
+                    draw_circle(canvas.frame, canvas.width, *cx, *cy, *radius, color.0, color.1, color.2);
+                }
+            }
+        }
+    }
+}
 
 // ============================================================================
 // CORE DATA TYPES
@@ -36,51 +141,167 @@ impl<'a> Canvas<'a> {
     }
 }
 
+struct HighlightBounds {
+    lower: f64,
+    upper: f64,
+    target_lower: f64,
+    target_upper: f64,
+}
+
+impl HighlightBounds {
+    fn new(lower: f64, upper: f64) -> Self {
+        Self {
+            lower,
+            upper,
+            target_lower: lower,
+            target_upper: upper,
+        }
+    }
+
+    fn set_target_bounds(&mut self, lower: f64, upper: f64) {
+        self.target_lower = lower;
+        self.target_upper = upper;
+    }
+
+    fn update_position(&mut self) {
+        self.lower = lerp(self.lower, self.target_lower);
+        self.upper = lerp(self.upper, self.target_upper);
+    }
+
+    fn get_bounds(&self) -> (f64, f64) {
+        (self.lower, self.upper)
+    }
+}
+
 struct AppState {
-    needle: Needle,
-    current_value: Option<f64>,
+    needle1: Option<Needle>,
+    needle2: Option<Needle>,
+    current_values: HashMap<String, f64>,
     min_value: f64,
     max_value: f64,
-    highlight_range: Option<(f64, f64)>,
+    highlight_bounds: Option<HighlightBounds>,
+    highlight_override: Option<(f64, f64)>, // Command-line override for highlight range
 }
 
 impl AppState {
     fn new(min_value: f64, max_value: f64) -> Self {
         Self {
-            needle: Needle::new(),
-            current_value: None,
+            needle1: None,
+            needle2: None,
+            current_values: HashMap::new(),
             min_value,
             max_value,
-            highlight_range: None,
+            highlight_bounds: None,
+            highlight_override: None,
         }
     }
 
-    fn update(&mut self, receiver: &Receiver<f64>) {
-        // Try to get the latest value without blocking
-        while let Ok(value) = receiver.try_recv() {
-            self.current_value = Some(value);
+    fn update(&mut self, receiver: &Receiver<HashMap<String, f64>>) {
+        // Try to get the latest values without blocking
+        while let Ok(values) = receiver.try_recv() {
+            // Clear current values and update with new ones
+            self.current_values.clear();
+            self.current_values.extend(values.clone());
+            
+            // Update needle1
+            if let Some(value) = values.get("needle1") {
+                if self.needle1.is_none() {
+                    self.needle1 = Some(Needle::new());
+                }
+                if let Some(ref mut needle) = self.needle1 {
+                    let target_pos = ((value - self.min_value) / (self.max_value - self.min_value)).clamp(0.0, 1.0);
+                    needle.set_target_pos(target_pos);
+                }
+            } else {
+                self.needle1 = None;
+            }
+            
+            // Update needle2
+            if let Some(value) = values.get("needle2") {
+                if self.needle2.is_none() {
+                    self.needle2 = Some(Needle::new());
+                }
+                if let Some(ref mut needle) = self.needle2 {
+                    let target_pos = ((value - self.min_value) / (self.max_value - self.min_value)).clamp(0.0, 1.0);
+                    needle.set_target_pos(target_pos);
+                }
+            } else {
+                self.needle2 = None;
+            }
+            
+            // Update highlight range from highlightlower and highlightupper
+            // But only if there's no command-line override
+            if self.highlight_override.is_none() {
+                if let (Some(&lower), Some(&upper)) = (values.get("highlightlower"), values.get("highlightupper")) {
+                    let (min_bound, max_bound) = (lower.min(upper), lower.max(upper));
+                    if let Some(ref mut bounds) = self.highlight_bounds {
+                        bounds.set_target_bounds(min_bound, max_bound);
+                    } else {
+                        self.highlight_bounds = Some(HighlightBounds::new(min_bound, max_bound));
+                    }
+                } else {
+                    self.highlight_bounds = None;
+                }
+            }
         }
 
-        // Update needle position
-        if let Some(value) = self.current_value {
-            let target_pos = ((value - self.min_value) / (self.max_value - self.min_value)).clamp(0.0, 1.0);
-            self.needle.set_target_pos(target_pos);
-        } else {
-            self.needle.update_random();
+        // Update needle positions
+        if let Some(ref mut needle) = self.needle1 {
+            needle.update_position();
         }
-        self.needle.update_position();
+        if let Some(ref mut needle) = self.needle2 {
+            needle.update_position();
+        }
+        
+        // Update highlight bounds position
+        if let Some(ref mut bounds) = self.highlight_bounds {
+            bounds.update_position();
+        }
+        
+        // If no values received yet, do random updates
+        if self.current_values.is_empty() {
+            if let Some(ref mut needle) = self.needle1 {
+                needle.update_random();
+            }
+            if let Some(ref mut needle) = self.needle2 {
+                needle.update_random();
+            }
+        }
     }
 
     fn is_out_of_range(&self) -> bool {
-        if let Some(value) = self.current_value {
-            value < self.min_value || value > self.max_value
-        } else {
-            false
+        // Check if any needle values are out of range
+        if let Some(value) = self.current_values.get("needle1") {
+            if *value < self.min_value || *value > self.max_value {
+                return true;
+            }
         }
+        if let Some(value) = self.current_values.get("needle2") {
+            if *value < self.min_value || *value > self.max_value {
+                return true;
+            }
+        }
+        false
     }
 
     fn set_highlight_range(&mut self, lower: f64, upper: f64) {
-        self.highlight_range = Some((lower.min(upper), lower.max(upper)));
+        let (min_bound, max_bound) = (lower.min(upper), lower.max(upper));
+        if let Some(ref mut bounds) = self.highlight_bounds {
+            bounds.set_target_bounds(min_bound, max_bound);
+        } else {
+            self.highlight_bounds = Some(HighlightBounds::new(min_bound, max_bound));
+        }
+    }
+
+    fn set_highlight_override(&mut self, lower: f64, upper: f64) {
+        let (min_bound, max_bound) = (lower.min(upper), lower.max(upper));
+        self.highlight_override = Some((min_bound, max_bound));
+        // Set the initial highlight bounds to the override values
+        if let Some(ref mut bounds) = self.highlight_bounds {
+            bounds.set_target_bounds(min_bound, max_bound);
+        } else {
+            self.highlight_bounds = Some(HighlightBounds::new(min_bound, max_bound));
+        }
     }
 }
 
@@ -183,9 +404,9 @@ impl Dial {
                 if start_angle <= end_angle {
                     // Normal case: start < end
                     if angle < start_angle {
-                        angular_alpha = 1.0 - ((start_angle - angle).min(0.02) / 0.02);
+                        angular_alpha = 1.0 - ((start_angle - angle).min(config::HIGHLIGHT_EDGE_SOFTNESS) / config::HIGHLIGHT_EDGE_SOFTNESS);
                     } else if angle > end_angle {
-                        angular_alpha = 1.0 - ((angle - end_angle).min(0.02) / 0.02);
+                        angular_alpha = 1.0 - ((angle - end_angle).min(config::HIGHLIGHT_EDGE_SOFTNESS) / config::HIGHLIGHT_EDGE_SOFTNESS);
                     }
                     if angle < start_angle || angle > end_angle {
                         angular_alpha = angular_alpha.max(0.0);
@@ -194,10 +415,10 @@ impl Dial {
                     // Wrap case: start > end (crosses 0 degrees)
                     if angle < end_angle {
                         // Close to end edge
-                        angular_alpha = 1.0 - ((end_angle - angle).min(0.02) / 0.02).max(0.0);
+                        angular_alpha = 1.0 - ((end_angle - angle).min(config::HIGHLIGHT_EDGE_SOFTNESS) / config::HIGHLIGHT_EDGE_SOFTNESS).max(0.0);
                     } else if angle > start_angle {
                         // Close to start edge  
-                        angular_alpha = 1.0 - ((angle - start_angle).min(0.02) / 0.02).max(0.0);
+                        angular_alpha = 1.0 - ((angle - start_angle).min(config::HIGHLIGHT_EDGE_SOFTNESS) / config::HIGHLIGHT_EDGE_SOFTNESS).max(0.0);
                     } else {
                         // Between end and start (outside the arc)
                         let dist_to_start = if start_angle > angle {
@@ -211,7 +432,7 @@ impl Dial {
                             end_angle + 2.0 * std::f64::consts::PI - angle
                         };
                         let min_dist = dist_to_start.min(dist_to_end);
-                        angular_alpha = 1.0 - (min_dist.min(0.02) / 0.02);
+                        angular_alpha = 1.0 - (min_dist.min(config::HIGHLIGHT_EDGE_SOFTNESS) / config::HIGHLIGHT_EDGE_SOFTNESS);
                         angular_alpha = angular_alpha.max(0.0);
                     }
                 }
@@ -356,6 +577,237 @@ impl Needle {
 }
 
 // ============================================================================
+// RETAINED MODE BUILDER FUNCTIONS
+// ============================================================================
+
+fn build_dial_commands(scene: &mut Scene, dial: &Dial, range: (f64, f64), color: (u8, u8, u8), highlight_range: Option<(f64, f64)>) {
+    // Add highlight band if needed
+    if let Some(highlight) = highlight_range {
+        let (hl_start, hl_end) = highlight;
+        let (r_start, r_end) = range;
+
+        // Convert to normalized [0,1] range
+        let norm_hl_start = ((hl_start - r_start) / (r_end - r_start)).clamp(0.0, 1.0);
+        let norm_hl_end = ((hl_end - r_start) / (r_end - r_start)).clamp(0.0, 1.0);
+
+        // Calculate angles for the highlight band
+        let start_angle = dial.start_angle + dial.arc_span * norm_hl_start;
+        let end_angle = dial.start_angle + dial.arc_span * norm_hl_end;
+
+        scene.add_command(DrawCommand::HighlightBand {
+            cx: dial.cx,
+            cy: dial.cy,
+            r: dial.r,
+            start_angle,
+            end_angle,
+            inner_radius: config::HIGHLIGHT_BAND_WIDTH as f64,
+            outer_radius: 0.0,
+        });
+    }
+    
+    // Add main dial arc
+    scene.add_command(DrawCommand::Arc {
+        cx: dial.cx,
+        cy: dial.cy,
+        r: dial.r,
+        thickness: dial.thickness,
+        start_angle: dial.start_angle,
+        arc_span: dial.arc_span,
+        color,
+    });
+    
+    // Add ticks and labels
+    for i in 0..config::NUM_TICKS {
+        let t = i as f64 / (config::NUM_TICKS as f64 - 1.0);
+        let angle = dial.start_angle + dial.arc_span * t;
+        
+        // Major tick
+        scene.add_command(DrawCommand::Tick {
+            cx: dial.cx,
+            cy: dial.cy,
+            r: dial.r,
+            angle,
+            length: config::TICK_LENGTH,
+            thickness: config::TICK_THICKNESS,
+            color,
+        });
+        
+        // Minor ticks
+        if i < config::NUM_TICKS - 1 {
+            for j in 1..=config::MINOR_TICKS_PER_INTERVAL {
+                let minor_t = t + (j as f64 / (config::MINOR_TICKS_PER_INTERVAL as f64 * (config::NUM_TICKS as f64 - 1.0)));
+                let minor_angle = dial.start_angle + dial.arc_span * minor_t;
+                scene.add_command(DrawCommand::Tick {
+                    cx: dial.cx,
+                    cy: dial.cy,
+                    r: dial.r,
+                    angle: minor_angle,
+                    length: config::MINOR_TICK_LENGTH,
+                    thickness: config::MINOR_TICK_THICKNESS,
+                    color,
+                });
+            }
+        }
+        
+        // Number labels
+        let label_radius = dial.r as f64 - config::TICK_LENGTH as f64 - config::TICKS_TO_NUMBERS_DISTANCE;
+        let label_x = dial.cx as f64 + angle.cos() * label_radius;
+        let label_y = dial.cy as f64 + angle.sin() * label_radius;
+        let value = range.0 + t * (range.1 - range.0);
+        let value_str = format!("{}", value.round() as i64);
+        scene.add_command(DrawCommand::Text {
+            x: label_x as i32,
+            y: label_y as i32,
+            text: value_str,
+            font_size: config::DIAL_NUMBERS_FONT_SIZE,
+            color,
+        });
+    }
+}
+
+fn build_needle_commands(scene: &mut Scene, needle: &Needle, dial: &Dial, color: (u8, u8, u8)) {
+    let angle = dial.start_angle + dial.arc_span * needle.pos;
+    let needle_length = dial.r as f64 * config::NEEDLE_LENGTH_FACTOR;
+    let nx = (dial.cx as f64 + angle.cos() * needle_length) as i32;
+    let ny = (dial.cy as f64 + angle.sin() * needle_length) as i32;
+
+    // Main needle line
+    scene.add_command(DrawCommand::NeedleLine {
+        x0: dial.cx,
+        y0: dial.cy,
+        x1: nx,
+        y1: ny,
+        thickness: config::NEEDLE_WIDTH,
+        tapered: true,
+        color,
+    });
+
+    // Draw the needle's back extension
+    let back_length = config::NEEDLE_BACK_LENGTH;
+    let back_x = (dial.cx as f64 - angle.cos() * back_length) as i32;
+    let back_y = (dial.cy as f64 - angle.sin() * back_length) as i32;
+    scene.add_command(DrawCommand::NeedleLine {
+        x0: dial.cx,
+        y0: dial.cy,
+        x1: back_x,
+        y1: back_y,
+        thickness: config::NEEDLE_WIDTH,
+        tapered: false,
+        color,
+    });
+
+    // Draw the needle's crossbar or dot
+    match config::DEFAULT_CROSSBAR_TYPE {
+        config::CrossbarType::BAR => {
+            let crossbar_length = config::NEEDLE_CROSSBAR_LENGTH;
+            let crossbar_thickness = config::NEEDLE_CROSSBAR_THICKNESS;
+            let crossbar_angle = angle + std::f64::consts::FRAC_PI_2; // Perpendicular to the needle
+            let crossbar_x1 = (dial.cx as f64 + crossbar_angle.cos() * (crossbar_length / 2.0)) as i32;
+            let crossbar_y1 = (dial.cy as f64 + crossbar_angle.sin() * (crossbar_length / 2.0)) as i32;
+            let crossbar_x2 = (dial.cx as f64 - crossbar_angle.cos() * (crossbar_length / 2.0)) as i32;
+            let crossbar_y2 = (dial.cy as f64 - crossbar_angle.sin() * (crossbar_length / 2.0)) as i32;
+            scene.add_command(DrawCommand::NeedleLine {
+                x0: crossbar_x1,
+                y0: crossbar_y1,
+                x1: crossbar_x2,
+                y1: crossbar_y2,
+                thickness: crossbar_thickness,
+                tapered: false,
+                color,
+            });
+        }
+        config::CrossbarType::DOT => {
+            let dot_radius = config::DOT_RADIUS as i32;
+            scene.add_command(DrawCommand::Circle {
+                cx: dial.cx,
+                cy: dial.cy,
+                radius: dot_radius,
+                color,
+            });
+        }
+    }
+}
+
+fn build_readout_commands(scene: &mut Scene, canvas: &Canvas, value: f64, color: (u8, u8, u8)) {
+    let value_int = value.trunc() as i32;
+    let value_frac = ((value.fract() * 1000.0).round() as u32).min(999);
+    let label_x = (canvas.width as f64 * config::READOUT_X_FACTOR) as i32;
+    let label_y = (canvas.height as f64 * config::READOUT_Y_FACTOR) as i32;
+
+    // Integer part in big font
+    let value_str = format!("{}", value_int);
+    scene.add_command(DrawCommand::Text {
+        x: label_x,
+        y: label_y,
+        text: value_str.clone(),
+        font_size: config::READOUT_BIG_FONT_SIZE,
+        color,
+    });
+
+    // Fractional part in smaller font
+    let font = Font::try_from_vec(config::FONT_DATA.to_vec()).expect("Error loading font");
+    let scale_big = Scale::uniform(config::READOUT_BIG_FONT_SIZE);
+    let int_width = calculate_text_width(&value_str, &font, scale_big);
+    let frac_str = format!("{:03}", value_frac);
+    let frac_x = label_x + int_width / 2 + 28;
+    let frac_y = label_y + 2;
+    scene.add_command(DrawCommand::Text {
+        x: frac_x,
+        y: frac_y,
+        text: frac_str,
+        font_size: config::READOUT_SMALL_FONT_SIZE,
+        color,
+    });
+
+    // TODO: Add readout box drawing commands
+    // For now, we'll keep the immediate mode box drawing in a separate helper
+    build_readout_box_commands(scene, label_x, label_y, frac_x, frac_y, &value_str, color);
+}
+
+fn build_readout_box_commands(scene: &mut Scene, label_x: i32, label_y: i32, frac_x: i32, frac_y: i32, int_str: &str, color: (u8, u8, u8)) {
+    let box_padding = config::READOUT_BOX_PADDING;
+    let box_thickness = config::READOUT_BOX_THICKNESS;
+    let font_size = (config::READOUT_BIG_FONT_SIZE / 11.0) as i32;
+    
+    let box_left = label_x - box_padding - font_size * int_str.len() as i32;
+    let box_top = label_y - box_padding;
+    let box_right = frac_x + box_padding + 5;
+    let box_bottom = frac_y + box_padding;
+
+    // Draw box lines as needle lines
+    scene.add_command(DrawCommand::NeedleLine {
+        x0: box_left, y0: box_top, x1: box_right, y1: box_top,
+        thickness: box_thickness as f32, tapered: false, color
+    });
+    scene.add_command(DrawCommand::NeedleLine {
+        x0: box_left, y0: box_bottom, x1: box_right, y1: box_bottom,
+        thickness: box_thickness as f32, tapered: false, color
+    });
+    scene.add_command(DrawCommand::NeedleLine {
+        x0: box_left, y0: box_top, x1: box_left, y1: box_bottom,
+        thickness: box_thickness as f32, tapered: false, color
+    });
+    scene.add_command(DrawCommand::NeedleLine {
+        x0: box_right, y0: box_top, x1: box_right, y1: box_bottom,
+        thickness: box_thickness as f32, tapered: false, color
+    });
+}
+
+fn build_warning_commands(scene: &mut Scene, dial: &Dial) {
+    let exclamation_x = dial.cx;
+    let exclamation_y = dial.cy - (dial.r / 4);
+    let exclamation_str = "!";
+    let exclamation_color = (0xff, 0x00, 0x00);
+    scene.add_command(DrawCommand::Text {
+        x: exclamation_x,
+        y: exclamation_y,
+        text: exclamation_str.to_string(),
+        font_size: config::EXCLAMATION_MARK_FONT_SIZE,
+        color: exclamation_color,
+    });
+}
+
+// ============================================================================
 // APPLICATION LOGIC
 // ============================================================================
 
@@ -389,14 +841,29 @@ fn parse_args() -> (f64, f64, String, Option<(f64, f64)>) {
     (min_value, max_value, window_title, highlight_range)
 }
 
-fn spawn_input_thread() -> Receiver<f64> {
+fn spawn_input_thread() -> Receiver<HashMap<String, f64>> {
     let (sender, receiver) = mpsc::channel();
     thread::spawn(move || {
         let stdin = io::stdin();
         for line in stdin.lock().lines() {
             if let Ok(line) = line {
-                if let Ok(val) = line.trim().parse::<f64>() {
-                    let _ = sender.send(val);
+                let line = line.trim();
+                
+                // Check if line contains key-value pairs (has '=' character)
+                if line.contains('=') {
+                    let key_values = parse_key_value_line(line);
+                    
+                    if !key_values.is_empty() {
+                        let _ = sender.send(key_values);
+                    }
+                } else {
+                    // Try to parse as a single numeric value (backwards compatibility)
+                    if let Ok(val) = line.parse::<f64>() {
+                        let mut single_value_map = HashMap::new();
+                        single_value_map.insert("needle1".to_string(), val);
+                        single_value_map.insert("readout".to_string(), val);
+                        let _ = sender.send(single_value_map);
+                    }
                 }
             }
         }
@@ -404,28 +871,70 @@ fn spawn_input_thread() -> Receiver<f64> {
     receiver
 }
 
+fn parse_key_value_line(line: &str) -> HashMap<String, f64> {
+    let mut key_values = HashMap::new();
+    
+    // Split by spaces to get individual key=value pairs
+    for pair in line.split_whitespace() {
+        if let Some(eq_pos) = pair.find('=') {
+            let key = pair[..eq_pos].to_string();
+            let value_str = &pair[eq_pos + 1..];
+            
+            if let Ok(value) = value_str.parse::<f64>() {
+                key_values.insert(key, value);
+            }
+        }
+    }
+    
+    key_values
+}
+
 fn render_instrument(canvas: &mut Canvas, state: &AppState) {
-    canvas.clear((0xff, 0xff, 0xff));
+    // Create a scene to build our drawing commands
+    let mut scene = Scene::new(canvas.width, canvas.height);
+    
+    // Add clear command
+    scene.add_command(DrawCommand::Clear((0xff, 0xff, 0xff)));
     
     let dial = Dial::new(canvas.width, canvas.height);
     let is_out_of_range = state.is_out_of_range();
-    let color = if is_out_of_range { (0xff, 0x00, 0x00) } else { (0x00, 0x00, 0x00) };
+    let base_color = if is_out_of_range { (0xff, 0x00, 0x00) } else { (0x00, 0x00, 0x00) };
     
-    // Draw dial
-    dial.draw_with_highlight(canvas, (state.min_value, state.max_value), color, state.highlight_range);
+    // Build dial drawing commands
+    build_dial_commands(&mut scene, &dial, (state.min_value, state.max_value), base_color, state.highlight_bounds.as_ref().map(|b| b.get_bounds()));
     
-    // Draw needle
-    state.needle.draw(canvas, &dial, color);
+    // Draw needle1 if it exists
+    if let Some(ref needle) = state.needle1 {
+        let needle_color = if is_out_of_range { 
+            (0xff, 0x00, 0x00) 
+        } else { 
+            (0x00, 0x00, 0x00) // Black for needle1
+        };
+        build_needle_commands(&mut scene, needle, &dial, needle_color);
+    }
     
-    // Draw readout
-    if let Some(value) = state.current_value {
-        draw_readout(canvas, value, color);
+    // Draw needle2 if it exists
+    if let Some(ref needle) = state.needle2 {
+        let needle_color = if is_out_of_range { 
+            (0xff, 0x00, 0x00) 
+        } else { 
+            (0x00, 0x7f, 0xff) // Blue for needle2
+        };
+        build_needle_commands(&mut scene, needle, &dial, needle_color);
+    }
+    
+    // Draw readout if readout value exists
+    if let Some(&value) = state.current_values.get("readout") {
+        build_readout_commands(&mut scene, canvas, value, base_color);
     }
     
     // Draw warning indicator
     if is_out_of_range {
-        draw_warning(canvas, &dial);
+        build_warning_commands(&mut scene, &dial);
     }
+    
+    // Render the complete scene
+    scene.render(canvas);
 }
 
 fn draw_readout(canvas: &mut Canvas, value: f64, color: (u8, u8, u8)) {
@@ -500,9 +1009,9 @@ fn main() {
     // Initialize application state
     let mut app_state = AppState::new(min_value, max_value);
     
-    // Set highlight range if provided
+    // Set highlight override if provided via command line
     if let Some((lower, upper)) = highlight_range {
-        app_state.set_highlight_range(lower, upper);
+        app_state.set_highlight_override(lower, upper);
     }
     
     // Spawn input thread and get receiver
@@ -530,7 +1039,7 @@ fn main() {
     };
     
     // Frame timing
-    let target_fps = 60.0;
+    let target_fps = config::MAX_FRAMERATE;
     let frame_duration = std::time::Duration::from_secs_f64(1.0 / target_fps);
     let mut last_frame = Instant::now();
 
@@ -650,8 +1159,7 @@ fn draw_thick_line_tapered_aa(frame: &mut [u8], width: usize, x0: i32, y0: i32, 
 }
 
 fn lerp(current: f64, target: f64) -> f64 {
-    const LERP_FACTOR: f64 = 0.1; // Adjust this factor for smoother or faster transitions
-    current + (target - current) * LERP_FACTOR
+    current + (target - current) * config::LERP_FACTOR
 }
 
 fn draw_text(frame: &mut [u8], width: usize, height: usize, x: i32, y: i32, text: &str, font: &rusttype::Font, scale: rusttype::Scale, color: (u8, u8, u8)) {
@@ -702,6 +1210,125 @@ fn draw_circle(frame: &mut [u8], width: usize, cx: i32, cy: i32, radius: i32, r:
                 if px >= 0 && py >= 0 && (px as usize) < width && (py as usize) < frame.len() / (width * 4) {
                     set_pixel(frame, width, px as usize, py as usize, r, g, b, aa as f32);
                 }
+            }
+        }
+    }
+}
+
+fn render_arc_immediate(canvas: &mut Canvas, cx: i32, cy: i32, r: i32, thickness: i32, start_angle: f64, arc_span: f64, color: (u8, u8, u8)) {
+    let end_angle = start_angle + arc_span;
+    let mut start_angle = start_angle;
+    let mut end_angle = end_angle;
+    if start_angle < 0.0 { start_angle += 2.0 * std::f64::consts::PI; }
+    if end_angle >= 2.0 * std::f64::consts::PI { end_angle -= 2.0 * std::f64::consts::PI; }
+    
+    for y in 0..canvas.height as i32 {
+        for x in 0..canvas.width as i32 {
+            let dx = x - cx;
+            let dy = y - cy;
+            let dist = ((dx * dx + dy * dy) as f64).sqrt();
+            let mut angle = (dy as f64).atan2(dx as f64);
+            if angle < 0.0 {
+                angle += 2.0 * std::f64::consts::PI;
+            }
+            let mut start = start_angle;
+            let mut end = end_angle;
+            if start < 0.0 { start += 2.0 * std::f64::consts::PI; }
+            if end < 0.0 { end += 2.0 * std::f64::consts::PI; }
+            let in_arc = if start < end {
+                angle >= start && angle <= end
+            } else {
+                angle >= start || angle <= end
+            };
+            if in_arc {
+                let aa = if dist > r as f64 {
+                    1.0 - (dist - r as f64).min(1.0)
+                } else if dist < (r - thickness) as f64 {
+                    1.0 - ((r - thickness) as f64 - dist).min(1.0)
+                } else {
+                    1.0
+                };
+                if dist >= (r - thickness - 1) as f64 && dist <= (r + 1) as f64 && aa > 0.0 {
+                    set_pixel(canvas.frame, canvas.width, x as usize, y as usize, color.0, color.1, color.2, aa as f32);
+                }
+            }
+        }
+    }
+}
+
+fn render_highlight_band_immediate(canvas: &mut Canvas, cx: i32, cy: i32, r: i32, start_angle: f64, end_angle: f64, inner_radius: f64, outer_radius: f64) {
+    // Draw the highlight band as a thick arc
+    let band_inner_radius = (r as f64 - inner_radius).max(0.0);
+    let band_outer_radius = (r as f64 - outer_radius).max(0.0);
+    
+    for y in 0..canvas.height as i32 {
+        for x in 0..canvas.width as i32 {
+            let dx = x - cx;
+            let dy = y - cy;
+            let dist = ((dx * dx + dy * dy) as f64).sqrt();
+            let mut angle = (dy as f64).atan2(dx as f64);
+            if angle < 0.0 {
+                angle += 2.0 * std::f64::consts::PI;
+            }
+            
+            // Calculate angular distance to edges for anti-aliasing
+            let mut angular_alpha = 1.0;
+            if start_angle <= end_angle {
+                // Normal case: start < end
+                if angle < start_angle {
+                    angular_alpha = 1.0 - ((start_angle - angle).min(config::HIGHLIGHT_EDGE_SOFTNESS) / config::HIGHLIGHT_EDGE_SOFTNESS);
+                } else if angle > end_angle {
+                    angular_alpha = 1.0 - ((angle - end_angle).min(config::HIGHLIGHT_EDGE_SOFTNESS) / config::HIGHLIGHT_EDGE_SOFTNESS);
+                }
+                if angle < start_angle || angle > end_angle {
+                    angular_alpha = angular_alpha.max(0.0);
+                }
+            } else {
+                // Wrap case: start > end (crosses 0 degrees)
+                if angle < end_angle {
+                    // Close to end edge
+                    angular_alpha = 1.0 - ((end_angle - angle).min(config::HIGHLIGHT_EDGE_SOFTNESS) / config::HIGHLIGHT_EDGE_SOFTNESS).max(0.0);
+                } else if angle > start_angle {
+                    // Close to start edge  
+                    angular_alpha = 1.0 - ((angle - start_angle).min(config::HIGHLIGHT_EDGE_SOFTNESS) / config::HIGHLIGHT_EDGE_SOFTNESS).max(0.0);
+                } else {
+                    // Between end and start (outside the arc)
+                    let dist_to_start = if start_angle > angle {
+                        start_angle - angle
+                    } else {
+                        2.0 * std::f64::consts::PI - angle + start_angle
+                    };
+                    let dist_to_end = if angle > end_angle {
+                        angle - end_angle
+                    } else {
+                        end_angle + 2.0 * std::f64::consts::PI - angle
+                    };
+                    let min_dist = dist_to_start.min(dist_to_end);
+                    angular_alpha = 1.0 - (min_dist.min(config::HIGHLIGHT_EDGE_SOFTNESS) / config::HIGHLIGHT_EDGE_SOFTNESS);
+                    angular_alpha = angular_alpha.max(0.0);
+                }
+            }
+            
+            // Calculate radial alpha with improved anti-aliasing
+            let radial_alpha = if dist < band_inner_radius - 1.0 {
+                0.0
+            } else if dist < band_inner_radius + 1.0 {
+                // Smooth transition at inner edge
+                ((dist - (band_inner_radius - 1.0)) / 2.0).clamp(0.0, 1.0)
+            } else if dist <= band_outer_radius - 1.0 {
+                1.0
+            } else if dist <= band_outer_radius + 1.0 {
+                // Smooth transition at outer edge
+                1.0 - ((dist - (band_outer_radius - 1.0)) / 2.0).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            
+            let final_alpha = (angular_alpha * radial_alpha * config::HIGHLIGHT_ALPHA).clamp(0.0, 1.0);
+            
+            if final_alpha > 0.01 {
+                set_pixel(canvas.frame, canvas.width, x as usize, y as usize, 
+                        config::HIGHLIGHT_COLOR.0, config::HIGHLIGHT_COLOR.1, config::HIGHLIGHT_COLOR.2, final_alpha as f32);
             }
         }
     }
