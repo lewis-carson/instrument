@@ -41,6 +41,7 @@ struct AppState {
     current_value: Option<f64>,
     min_value: f64,
     max_value: f64,
+    highlight_range: Option<(f64, f64)>,
 }
 
 impl AppState {
@@ -50,6 +51,7 @@ impl AppState {
             current_value: None,
             min_value,
             max_value,
+            highlight_range: None,
         }
     }
 
@@ -76,6 +78,10 @@ impl AppState {
             false
         }
     }
+
+    fn set_highlight_range(&mut self, lower: f64, upper: f64) {
+        self.highlight_range = Some((lower.min(upper), lower.max(upper)));
+    }
 }
 
 struct Dial {
@@ -97,7 +103,10 @@ impl Dial {
         Self { cx, cy, r, thickness: config::DIAL_THICKNESS, arc_span, start_angle }
     }
 
-    fn draw(&self, canvas: &mut Canvas, range: (f64, f64), color: (u8, u8, u8)) {
+    fn draw_with_highlight(&self, canvas: &mut Canvas, range: (f64, f64), color: (u8, u8, u8), highlight_range: Option<(f64, f64)>) {
+        if let Some(highlight) = highlight_range {
+            self.draw_highlight_band(canvas, range, highlight);
+        }
         self.draw_arc(canvas, color);
         self.draw_ticks(canvas, range, color);
     }
@@ -138,6 +147,95 @@ impl Dial {
                     if dist >= (self.r - self.thickness - 1) as f64 && dist <= (self.r + 1) as f64 && aa > 0.0 {
                         set_pixel(canvas.frame, canvas.width, x as usize, y as usize, color.0, color.1, color.2, aa as f32);
                     }
+                }
+            }
+        }
+    }
+
+    fn draw_highlight_band(&self, canvas: &mut Canvas, range: (f64, f64), highlight_range: (f64, f64)) {
+        let (hl_start, hl_end) = highlight_range;
+        let (r_start, r_end) = range;
+
+        // Convert to normalized [0,1] range
+        let norm_hl_start = ((hl_start - r_start) / (r_end - r_start)).clamp(0.0, 1.0);
+        let norm_hl_end = ((hl_end - r_start) / (r_end - r_start)).clamp(0.0, 1.0);
+
+        // Calculate angles for the highlight band
+        let start_angle = self.start_angle + self.arc_span * norm_hl_start;
+        let end_angle = self.start_angle + self.arc_span * norm_hl_end;
+
+        // Draw the highlight band as a thick arc
+        let band_inner_radius = (self.r - config::HIGHLIGHT_BAND_WIDTH) as f64;
+        let band_outer_radius = self.r as f64;
+        
+        for y in 0..canvas.height as i32 {
+            for x in 0..canvas.width as i32 {
+                let dx = x - self.cx;
+                let dy = y - self.cy;
+                let dist = ((dx * dx + dy * dy) as f64).sqrt();
+                let mut angle = (dy as f64).atan2(dx as f64);
+                if angle < 0.0 {
+                    angle += 2.0 * std::f64::consts::PI;
+                }
+                
+                // Calculate angular distance to edges for anti-aliasing
+                let mut angular_alpha = 1.0;
+                if start_angle <= end_angle {
+                    // Normal case: start < end
+                    if angle < start_angle {
+                        angular_alpha = 1.0 - ((start_angle - angle).min(0.02) / 0.02);
+                    } else if angle > end_angle {
+                        angular_alpha = 1.0 - ((angle - end_angle).min(0.02) / 0.02);
+                    }
+                    if angle < start_angle || angle > end_angle {
+                        angular_alpha = angular_alpha.max(0.0);
+                    }
+                } else {
+                    // Wrap case: start > end (crosses 0 degrees)
+                    if angle < end_angle {
+                        // Close to end edge
+                        angular_alpha = 1.0 - ((end_angle - angle).min(0.02) / 0.02).max(0.0);
+                    } else if angle > start_angle {
+                        // Close to start edge  
+                        angular_alpha = 1.0 - ((angle - start_angle).min(0.02) / 0.02).max(0.0);
+                    } else {
+                        // Between end and start (outside the arc)
+                        let dist_to_start = if start_angle > angle {
+                            start_angle - angle
+                        } else {
+                            2.0 * std::f64::consts::PI - angle + start_angle
+                        };
+                        let dist_to_end = if angle > end_angle {
+                            angle - end_angle
+                        } else {
+                            end_angle + 2.0 * std::f64::consts::PI - angle
+                        };
+                        let min_dist = dist_to_start.min(dist_to_end);
+                        angular_alpha = 1.0 - (min_dist.min(0.02) / 0.02);
+                        angular_alpha = angular_alpha.max(0.0);
+                    }
+                }
+                
+                // Calculate radial alpha with improved anti-aliasing
+                let radial_alpha = if dist < band_inner_radius - 1.0 {
+                    0.0
+                } else if dist < band_inner_radius + 1.0 {
+                    // Smooth transition at inner edge
+                    ((dist - (band_inner_radius - 1.0)) / 2.0).clamp(0.0, 1.0)
+                } else if dist <= band_outer_radius - 1.0 {
+                    1.0
+                } else if dist <= band_outer_radius + 1.0 {
+                    // Smooth transition at outer edge
+                    1.0 - ((dist - (band_outer_radius - 1.0)) / 2.0).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                };
+                
+                let final_alpha = (angular_alpha * radial_alpha * config::HIGHLIGHT_ALPHA).clamp(0.0, 1.0);
+                
+                if final_alpha > 0.01 {
+                    set_pixel(canvas.frame, canvas.width, x as usize, y as usize, 
+                            config::HIGHLIGHT_COLOR.0, config::HIGHLIGHT_COLOR.1, config::HIGHLIGHT_COLOR.2, final_alpha as f32);
                 }
             }
         }
@@ -261,10 +359,11 @@ impl Needle {
 // APPLICATION LOGIC
 // ============================================================================
 
-fn parse_args() -> (f64, f64, String) {
+fn parse_args() -> (f64, f64, String, Option<(f64, f64)>) {
     let mut min_value = 0.0;
     let mut max_value = 100.0;
     let mut window_title = "Instrument".to_string();
+    let mut highlight_range = None;
     let mut args = env::args().peekable();
     
     while let Some(arg) = args.next() {
@@ -279,9 +378,15 @@ fn parse_args() -> (f64, f64, String) {
             if let Some(title) = args.next() {
                 window_title = title;
             }
+        } else if arg == "--highlight" {
+            if let (Some(upper), Some(lower)) = (args.next(), args.next()) {
+                if let (Ok(upper), Ok(lower)) = (upper.parse::<f64>(), lower.parse::<f64>()) {
+                    highlight_range = Some((lower.min(upper), lower.max(upper)));
+                }
+            }
         }
     }
-    (min_value, max_value, window_title)
+    (min_value, max_value, window_title, highlight_range)
 }
 
 fn spawn_input_thread() -> Receiver<f64> {
@@ -307,7 +412,7 @@ fn render_instrument(canvas: &mut Canvas, state: &AppState) {
     let color = if is_out_of_range { (0xff, 0x00, 0x00) } else { (0x00, 0x00, 0x00) };
     
     // Draw dial
-    dial.draw(canvas, (state.min_value, state.max_value), color);
+    dial.draw_with_highlight(canvas, (state.min_value, state.max_value), color, state.highlight_range);
     
     // Draw needle
     state.needle.draw(canvas, &dial, color);
@@ -390,10 +495,15 @@ fn draw_warning(canvas: &mut Canvas, dial: &Dial) {
 
 fn main() {
     // Parse command line arguments
-    let (min_value, max_value, window_title) = parse_args();
+    let (min_value, max_value, window_title, highlight_range) = parse_args();
     
     // Initialize application state
     let mut app_state = AppState::new(min_value, max_value);
+    
+    // Set highlight range if provided
+    if let Some((lower, upper)) = highlight_range {
+        app_state.set_highlight_range(lower, upper);
+    }
     
     // Spawn input thread and get receiver
     let receiver = spawn_input_thread();

@@ -5,4 +5,4 @@ while true; do
     # Output the RAM usage as an integer
     echo ${ram_usage} 
     sleep 0.1
-done | cargo run --release -- --title "RAM Usage" --range 0 100 --
+done | cargo run --release -- --title "RAM Usage" --highlight 75 100 --range 0 100 --
