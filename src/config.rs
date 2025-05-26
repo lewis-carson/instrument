@@ -5,7 +5,7 @@ pub const MINOR_TICK_LENGTH: i32 = 25; // Length of minor ticks
 pub const TICK_THICKNESS: f32 = 2.0; // Thickness of major ticks
 pub const MINOR_TICK_THICKNESS: f32 = 0.5; // Thickness of minor ticks
 
-pub const DIAL_MARGIN: i32 = 32; // Margin around the dial
+pub const DIAL_MARGIN: i32 = 45; // Margin around the dial
 pub const DIAL_THICKNESS: i32 = 4; // Thickness of the dial arc
 pub const DIAL_NUMBERS_FONT_SIZE: f32 = 30.0; // Font size for the dial numbers
 
@@ -34,6 +34,13 @@ pub const EXCLAMATION_MARK_FONT_SIZE: f32 = 50.0; // Font size for the exclamati
 
 pub const DOT_RADIUS: i32 = 6; // Radius of the dot for the DOT crossbar type
 
+// Curved text configuration
+pub const CURVED_TEXT: &str = "INSTRUMENT GAUGE"; // Text to display curved at the top of the dial
+pub const CURVED_TEXT_FONT_SIZE: f32 = 30.0; // Font size for curved text
+pub const CURVED_TEXT_RADIUS_OFFSET: f64 = 15.0; // Distance from dial center to curved text (radius offset)
+pub const CURVED_TEXT_ARC_SPAN: f64 = std::f64::consts::PI * 0.23; // Angular span for the curved text (23% of PI)
+pub const CURVED_TEXT_ANGLE: f64 = 3.0 * std::f64::consts::PI / 2.0; // Center angle for the curved text (PI = top of dial, 0 = right, PI/2 = bottom, 3*PI/2 = left)
+
 // Highlight band configuration
 pub const HIGHLIGHT_BAND_WIDTH: i32 = 35; // Width of the highlight band
 pub const HIGHLIGHT_COLOR: (u8, u8, u8) = (0xff, 0x00, 0x00); // Red color for the highlight band
@@ -54,7 +61,7 @@ pub mod mini_dial {
     pub const TICK_THICKNESS: f32 = 2.0; // Thickness of major ticks
     pub const MINOR_TICK_THICKNESS: f32 = 0.5; // Thickness of minor ticks
 
-    pub const DIAL_MARGIN: i32 = 10; // Margin around the dial
+    pub const DIAL_MARGIN: i32 = 15; // Margin around the dial
     pub const DIAL_THICKNESS: i32 = 2; // Thickness of the dial arc
 
     pub const NEEDLE_LENGTH_FACTOR: f64 = 1.0; // Factor to scale the needle length relative to the dial radius

@@ -41,6 +41,11 @@ enum DrawCommand {
         x: i32, y: i32, text: String,
         font_size: f32, color: (u8, u8, u8),
     },
+    CurvedText {
+        cx: i32, cy: i32, radius: f64, text: String,
+        font_size: f32, arc_span: f64, start_angle: f64,
+        color: (u8, u8, u8),
+    },
     NeedleLine {
         x0: i32, y0: i32, x1: i32, y1: i32,
         thickness: f32, tapered: bool,
@@ -95,6 +100,11 @@ impl Scene {
                     let font = Font::try_from_vec(config::FONT_DATA.to_vec()).expect("Error loading font");
                     let scale = Scale::uniform(*font_size);
                     draw_text(canvas.frame, canvas.width, canvas.height, *x, *y, text, &font, scale, *color);
+                }
+                DrawCommand::CurvedText { cx, cy, radius, text, font_size, arc_span, start_angle, color } => {
+                    let font = Font::try_from_vec(config::FONT_DATA.to_vec()).expect("Error loading font");
+                    let scale = Scale::uniform(*font_size);
+                    draw_curved_text(canvas, *cx, *cy, *radius, text, &font, scale, *arc_span, *start_angle, *color);
                 }
                 DrawCommand::NeedleLine { x0, y0, x1, y1, thickness, tapered, color } => {
                     if *tapered {
@@ -662,6 +672,22 @@ fn build_warning_commands(scene: &mut Scene, dial: &Dial) {
     });
 }
 
+fn build_curved_text_commands(scene: &mut Scene, dial: &Dial, color: (u8, u8, u8)) {
+    let text_radius = dial.r as f64 + config::CURVED_TEXT_RADIUS_OFFSET;
+    let text_start_angle = config::CURVED_TEXT_ANGLE; // Use the configured center angle directly
+    
+    scene.add_command(DrawCommand::CurvedText {
+        cx: dial.cx,
+        cy: dial.cy,
+        radius: text_radius,
+        text: config::CURVED_TEXT.to_string(),
+        font_size: config::CURVED_TEXT_FONT_SIZE,
+        arc_span: config::CURVED_TEXT_ARC_SPAN,
+        start_angle: text_start_angle,
+        color,
+    });
+}
+
 // ============================================================================
 // APPLICATION LOGIC
 // ============================================================================
@@ -757,6 +783,9 @@ fn render_instrument(canvas: &mut Canvas, state: &AppState) {
     
     // Build dial drawing commands
     build_dial_commands(&mut scene, &dial, (state.min_value, state.max_value), base_color, state.highlight_bounds.as_ref().map(|b| b.get_bounds()));
+    
+    // Add curved text at the top of the dial
+    build_curved_text_commands(&mut scene, &dial, base_color);
     
     // Draw needle1 if it exists
     if let Some(ref needle) = state.needle1 {
@@ -1002,6 +1031,121 @@ fn draw_text(frame: &mut [u8], width: usize, height: usize, x: i32, y: i32, text
                     set_pixel(frame, width, px as usize, py as usize, color.0, color.1, color.2, v as f32); // Set text color to black
                 }
             });
+        }
+    }
+}
+
+fn draw_curved_text(canvas: &mut Canvas, cx: i32, cy: i32, radius: f64, text: &str, font: &rusttype::Font, scale: rusttype::Scale, arc_span: f64, center_angle: f64, color: (u8, u8, u8)) {
+    use rusttype::{point, PositionedGlyph};
+    
+    // Create glyphs for the text to calculate individual character positions
+    let v_metrics = font.v_metrics(scale);
+    let glyphs: Vec<PositionedGlyph> = font.layout(text, scale, point(0.0, 0.0 + v_metrics.ascent)).collect();
+    
+    if glyphs.is_empty() {
+        return;
+    }
+    
+    // Calculate total text width by examining glyph positions
+    let total_width = if let (Some(first), Some(last)) = (glyphs.first(), glyphs.last()) {
+        (last.position().x - first.position().x + last.unpositioned().h_metrics().advance_width) as f64
+    } else {
+        0.0
+    };
+    
+    if total_width <= 0.0 {
+        return;
+    }
+    
+    // Calculate the actual arc span needed for the text
+    let chars_arc_span = total_width / radius;
+    let actual_arc_span = chars_arc_span.min(arc_span);
+    
+    // Start angle for the text (center the text around center_angle)
+    let start_angle = center_angle - actual_arc_span / 2.0;
+    
+    // Draw each character
+    for glyph in &glyphs {
+        if glyph.pixel_bounding_box().is_some() {
+            let char_advance = glyph.unpositioned().h_metrics().advance_width as f64;
+            
+            // Calculate the angle for the center of this character
+            let char_position = glyph.position().x as f64;
+            let first_position = glyphs[0].position().x as f64;
+            let relative_position = char_position - first_position + char_advance / 2.0;
+            let char_angle = start_angle + (relative_position / radius);
+            
+            // Position on the arc
+            let char_x = cx as f64 + char_angle.cos() * radius;
+            let char_y = cy as f64 + char_angle.sin() * radius;
+            
+            // Rotation angle (tangent to the circle)
+            let rotation_angle = char_angle + std::f64::consts::FRAC_PI_2;
+            
+            // Draw the character with improved rotation
+            draw_rotated_glyph_improved(canvas, glyph, char_x, char_y, rotation_angle, color);
+        }
+    }
+}
+
+fn draw_rotated_glyph_improved(canvas: &mut Canvas, glyph: &rusttype::PositionedGlyph, center_x: f64, center_y: f64, rotation: f64, color: (u8, u8, u8)) {
+    if let Some(bb) = glyph.pixel_bounding_box() {
+        let cos_r = rotation.cos();
+        let sin_r = rotation.sin();
+        
+        // Calculate glyph center offset
+        let glyph_center_x = (bb.min.x + bb.max.x) as f64 / 2.0;
+        let glyph_center_y = (bb.min.y + bb.max.y) as f64 / 2.0;
+        
+        // Draw each pixel of the glyph with sub-pixel accuracy
+        glyph.draw(|gx, gy, v| {
+            if v > 0.01 {  // Only draw visible pixels
+                // Get pixel position relative to glyph origin
+                let px = gx as f64 + bb.min.x as f64;
+                let py = gy as f64 + bb.min.y as f64;
+                
+                // Translate to glyph center
+                let local_x = px - glyph_center_x;
+                let local_y = py - glyph_center_y;
+                
+                // Apply rotation
+                let rotated_x = local_x * cos_r - local_y * sin_r;
+                let rotated_y = local_x * sin_r + local_y * cos_r;
+                
+                // Translate to final position
+                let final_x = center_x + rotated_x;
+                let final_y = center_y + rotated_y;
+                
+                // Draw with sub-pixel positioning for smoother rendering
+                draw_antialiased_pixel(canvas, final_x, final_y, color, v as f32);
+            }
+        });
+    }
+}
+
+fn draw_antialiased_pixel(canvas: &mut Canvas, x: f64, y: f64, color: (u8, u8, u8), alpha: f32) {
+    // Get the integer coordinates
+    let x_floor = x.floor() as i32;
+    let y_floor = y.floor() as i32;
+    
+    // Calculate fractional parts for sub-pixel positioning
+    let x_frac = x - x_floor as f64;
+    let y_frac = y - y_floor as f64;
+    
+    // Distribute the pixel across the 4 nearest pixels with bilinear interpolation
+    let samples = [
+        (x_floor, y_floor, (1.0 - x_frac) * (1.0 - y_frac)),
+        (x_floor + 1, y_floor, x_frac * (1.0 - y_frac)),
+        (x_floor, y_floor + 1, (1.0 - x_frac) * y_frac),
+        (x_floor + 1, y_floor + 1, x_frac * y_frac),
+    ];
+    
+    for (px, py, weight) in samples.iter() {
+        if *px >= 0 && *px < canvas.width as i32 && *py >= 0 && *py < canvas.height as i32 {
+            let final_alpha = alpha * (*weight as f32);
+            if final_alpha > 0.01 {
+                set_pixel(canvas.frame, canvas.width, *px as usize, *py as usize, color.0, color.1, color.2, final_alpha);
+            }
         }
     }
 }
