@@ -31,7 +31,7 @@ while true; do
     # readout: shows the RAM usage percentage
     readout=$ram_usage
     
-    echo "needle1=${needle1} needle2=${needle2} readout=${readout}"
+    echo "needle1=${needle1} needle2=${needle2} highlightlower=90 highlightupper=100 readout=${readout} needle1label=RAM needle2label=CPU"
     
     sleep 1
 done | cargo run --release -- --title "System Monitor - RAM/CPU" --range 0 100 --

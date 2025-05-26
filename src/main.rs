@@ -1,5 +1,4 @@
 mod config;
-mod mini_dial;
 
 use pixels::{Pixels, SurfaceTexture};
 use rand::Rng;
@@ -55,21 +54,13 @@ enum DrawCommand {
 
 struct Scene {
     commands: Vec<DrawCommand>,
-    width: usize,
-    height: usize,
 }
 
 impl Scene {
-    fn new(width: usize, height: usize) -> Self {
+    fn new(_width: usize, _height: usize) -> Self {
         Self {
             commands: Vec::new(),
-            width,
-            height,
         }
-    }
-
-    fn clear(&mut self) {
-        self.commands.clear();
     }
 
     fn add_command(&mut self, command: DrawCommand) {
@@ -285,15 +276,6 @@ impl AppState {
         false
     }
 
-    fn set_highlight_range(&mut self, lower: f64, upper: f64) {
-        let (min_bound, max_bound) = (lower.min(upper), lower.max(upper));
-        if let Some(ref mut bounds) = self.highlight_bounds {
-            bounds.set_target_bounds(min_bound, max_bound);
-        } else {
-            self.highlight_bounds = Some(HighlightBounds::new(min_bound, max_bound));
-        }
-    }
-
     fn set_highlight_override(&mut self, lower: f64, upper: f64) {
         let (min_bound, max_bound) = (lower.min(upper), lower.max(upper));
         self.highlight_override = Some((min_bound, max_bound));
@@ -327,197 +309,12 @@ impl Dial {
 
     fn new_complication(width: usize, height: usize) -> Self {
         // Create a smaller dial for the needle2 complication
-        let r = ((width.min(height) as f64) / config::COMPLICATION_SIZE) as i32 - mini_dial::DIAL_MARGIN; // Much smaller radius
+        let r = ((width.min(height) as f64) / config::COMPLICATION_SIZE) as i32 - config::mini_dial::DIAL_MARGIN; // Much smaller radius
         let cx = width as i32 / 2; // Center horizontally
-        let cy = r + mini_dial::DIAL_MARGIN + config::COMPLICATION_SHIFT; // Position in top middle with configurable offset
+        let cy = r + config::mini_dial::DIAL_MARGIN + config::COMPLICATION_SHIFT; // Position in top middle with configurable offset
         let arc_span = std::f64::consts::PI * 1.5;
         let start_angle = std::f64::consts::FRAC_PI_2;
-        Self { cx, cy, r, thickness: mini_dial::DIAL_THICKNESS, arc_span, start_angle }
-    }
-
-    fn draw_with_highlight(&self, canvas: &mut Canvas, range: (f64, f64), color: (u8, u8, u8), highlight_range: Option<(f64, f64)>) {
-        if let Some(highlight) = highlight_range {
-            self.draw_highlight_band(canvas, range, highlight);
-        }
-        self.draw_arc(canvas, color);
-        self.draw_ticks(canvas, range, color);
-    }
-
-    fn draw_arc(&self, canvas: &mut Canvas, color: (u8, u8, u8)) {
-        let end_angle = self.start_angle + self.arc_span;
-        let mut start_angle = self.start_angle;
-        let mut end_angle = end_angle;
-        if start_angle < 0.0 { start_angle += 2.0 * std::f64::consts::PI; }
-        if end_angle >= 2.0 * std::f64::consts::PI { end_angle -= 2.0 * std::f64::consts::PI; }
-        
-        for y in 0..canvas.height as i32 {
-            for x in 0..canvas.width as i32 {
-                let dx = x - self.cx;
-                let dy = y - self.cy;
-                let dist = ((dx * dx + dy * dy) as f64).sqrt();
-                let mut angle = (dy as f64).atan2(dx as f64);
-                if angle < 0.0 {
-                    angle += 2.0 * std::f64::consts::PI;
-                }
-                let mut start = start_angle;
-                let mut end = end_angle;
-                if start < 0.0 { start += 2.0 * std::f64::consts::PI; }
-                if end < 0.0 { end += 2.0 * std::f64::consts::PI; }
-                let in_arc = if start < end {
-                    angle >= start && angle <= end
-                } else {
-                    angle >= start || angle <= end
-                };
-                if in_arc {
-                    let aa = if dist > self.r as f64 {
-                        1.0 - (dist - self.r as f64).min(1.0)
-                    } else if dist < (self.r - self.thickness) as f64 {
-                        1.0 - ((self.r - self.thickness) as f64 - dist).min(1.0)
-                    } else {
-                        1.0
-                    };
-                    if dist >= (self.r - self.thickness - 1) as f64 && dist <= (self.r + 1) as f64 && aa > 0.0 {
-                        set_pixel(canvas.frame, canvas.width, x as usize, y as usize, color.0, color.1, color.2, aa as f32);
-                    }
-                }
-            }
-        }
-    }
-
-    fn draw_highlight_band(&self, canvas: &mut Canvas, range: (f64, f64), highlight_range: (f64, f64)) {
-        let (hl_start, hl_end) = highlight_range;
-        let (r_start, r_end) = range;
-
-        // Convert to normalized [0,1] range
-        let norm_hl_start = ((hl_start - r_start) / (r_end - r_start)).clamp(0.0, 1.0);
-        let norm_hl_end = ((hl_end - r_start) / (r_end - r_start)).clamp(0.0, 1.0);
-
-        // Calculate angles for the highlight band
-        let start_angle = self.start_angle + self.arc_span * norm_hl_start;
-        let end_angle = self.start_angle + self.arc_span * norm_hl_end;
-
-        // Draw the highlight band as a thick arc
-        let band_inner_radius = (self.r - config::HIGHLIGHT_BAND_WIDTH) as f64;
-        let band_outer_radius = self.r as f64;
-        
-        for y in 0..canvas.height as i32 {
-            for x in 0..canvas.width as i32 {
-                let dx = x - self.cx;
-                let dy = y - self.cy;
-                let dist = ((dx * dx + dy * dy) as f64).sqrt();
-                let mut angle = (dy as f64).atan2(dx as f64);
-                if angle < 0.0 {
-                    angle += 2.0 * std::f64::consts::PI;
-                }
-                
-                // Calculate angular distance to edges for anti-aliasing
-                let mut angular_alpha = 1.0;
-                if start_angle <= end_angle {
-                    // Normal case: start < end
-                    if angle < start_angle {
-                        angular_alpha = 1.0 - ((start_angle - angle).min(config::HIGHLIGHT_EDGE_SOFTNESS) / config::HIGHLIGHT_EDGE_SOFTNESS);
-                    } else if angle > end_angle {
-                        angular_alpha = 1.0 - ((angle - end_angle).min(config::HIGHLIGHT_EDGE_SOFTNESS) / config::HIGHLIGHT_EDGE_SOFTNESS);
-                    }
-                    if angle < start_angle || angle > end_angle {
-                        angular_alpha = angular_alpha.max(0.0);
-                    }
-                } else {
-                    // Wrap case: start > end (crosses 0 degrees)
-                    if angle < end_angle {
-                        // Close to end edge
-                        angular_alpha = 1.0 - ((end_angle - angle).min(config::HIGHLIGHT_EDGE_SOFTNESS) / config::HIGHLIGHT_EDGE_SOFTNESS).max(0.0);
-                    } else if angle > start_angle {
-                        // Close to start edge  
-                        angular_alpha = 1.0 - ((angle - start_angle).min(config::HIGHLIGHT_EDGE_SOFTNESS) / config::HIGHLIGHT_EDGE_SOFTNESS).max(0.0);
-                    } else {
-                        // Between end and start (outside the arc)
-                        let dist_to_start = if start_angle > angle {
-                            start_angle - angle
-                        } else {
-                            2.0 * std::f64::consts::PI - angle + start_angle
-                        };
-                        let dist_to_end = if angle > end_angle {
-                            angle - end_angle
-                        } else {
-                            end_angle + 2.0 * std::f64::consts::PI - angle
-                        };
-                        let min_dist = dist_to_start.min(dist_to_end);
-                        angular_alpha = 1.0 - (min_dist.min(config::HIGHLIGHT_EDGE_SOFTNESS) / config::HIGHLIGHT_EDGE_SOFTNESS);
-                        angular_alpha = angular_alpha.max(0.0);
-                    }
-                }
-                
-                // Calculate radial alpha with improved anti-aliasing
-                let radial_alpha = if dist < band_inner_radius - 1.0 {
-                    0.0
-                } else if dist < band_inner_radius + 1.0 {
-                    // Smooth transition at inner edge
-                    ((dist - (band_inner_radius - 1.0)) / 2.0).clamp(0.0, 1.0)
-                } else if dist <= band_outer_radius - 1.0 {
-                    1.0
-                } else if dist <= band_outer_radius + 1.0 {
-                    // Smooth transition at outer edge
-                    1.0 - ((dist - (band_outer_radius - 1.0)) / 2.0).clamp(0.0, 1.0)
-                } else {
-                    0.0
-                };
-                
-                let final_alpha = (angular_alpha * radial_alpha * config::HIGHLIGHT_ALPHA).clamp(0.0, 1.0);
-                
-                if final_alpha > 0.01 {
-                    set_pixel(canvas.frame, canvas.width, x as usize, y as usize, 
-                            config::HIGHLIGHT_COLOR.0, config::HIGHLIGHT_COLOR.1, config::HIGHLIGHT_COLOR.2, final_alpha as f32);
-                }
-            }
-        }
-    }
-
-    fn draw_ticks(&self, canvas: &mut Canvas, range: (f64, f64), color: (u8, u8, u8)) {
-        let font = Font::try_from_vec(config::FONT_DATA.to_vec()).expect("Error loading font");
-        let dial_numbers_scale = Scale::uniform(config::DIAL_NUMBERS_FONT_SIZE);
-        
-        for i in 0..config::NUM_TICKS {
-            let t = i as f64 / (config::NUM_TICKS as f64 - 1.0);
-            let angle = self.start_angle + self.arc_span * t;
-            
-            // Major tick
-            self.draw_single_tick(canvas, angle, config::TICK_LENGTH, config::TICK_THICKNESS, color);
-            
-            // Minor ticks
-            if i < config::NUM_TICKS - 1 {
-                for j in 1..=config::MINOR_TICKS_PER_INTERVAL {
-                    let minor_t = t + (j as f64 / (config::MINOR_TICKS_PER_INTERVAL as f64 * (config::NUM_TICKS as f64 - 1.0)));
-                    let minor_angle = self.start_angle + self.arc_span * minor_t;
-                    self.draw_single_tick(canvas, minor_angle, config::MINOR_TICK_LENGTH, config::MINOR_TICK_THICKNESS, color);
-                }
-            }
-            
-            // Number labels
-            let label_radius = self.r as f64 - config::TICK_LENGTH as f64 - config::TICKS_TO_NUMBERS_DISTANCE;
-            let label_x = self.cx as f64 + angle.cos() * label_radius;
-            let label_y = self.cy as f64 + angle.sin() * label_radius;
-            let value = range.0 + t * (range.1 - range.0);
-            let value_str = format!("{}", value.round() as i64);
-            draw_text(canvas.frame, canvas.width, canvas.height, label_x as i32, label_y as i32, &value_str, &font, dial_numbers_scale, color);
-        }
-    }
-
-    fn draw_single_tick(&self, canvas: &mut Canvas, angle: f64, length: i32, thickness: f32, color: (u8, u8, u8)) {
-        let outer_x = self.cx as f64 + angle.cos() * (self.r as f64 - 1.0);
-        let outer_y = self.cy as f64 + angle.sin() * (self.r as f64 - 1.0);
-        let inner_x = self.cx as f64 + angle.cos() * (self.r as f64 - length as f64);
-        let inner_y = self.cy as f64 + angle.sin() * (self.r as f64 - length as f64);
-        draw_thick_line_aa(
-            canvas.frame,
-            canvas.width,
-            inner_x.round() as i32,
-            inner_y.round() as i32,
-            outer_x.round() as i32,
-            outer_y.round() as i32,
-            thickness,
-            color.0, color.1, color.2
-        );
+        Self { cx, cy, r, thickness: config::mini_dial::DIAL_THICKNESS, arc_span, start_angle }
     }
 }
 
@@ -551,39 +348,6 @@ impl Needle {
 
     fn update_position(&mut self) {
         self.pos = lerp(self.pos, self.target_pos).clamp(0.0, 1.0);
-    }
-
-    fn draw(&self, canvas: &mut Canvas, dial: &Dial, color: (u8, u8, u8)) {
-        let angle = dial.start_angle + dial.arc_span * self.pos;
-        let needle_length = dial.r as f64 * config::NEEDLE_LENGTH_FACTOR;
-        let nx = (dial.cx as f64 + angle.cos() * needle_length) as i32;
-        let ny = (dial.cy as f64 + angle.sin() * needle_length) as i32;
-
-        draw_thick_line_tapered_aa(canvas.frame, canvas.width, dial.cx, dial.cy, nx, ny, config::NEEDLE_WIDTH, color.0, color.1, color.2);
-
-        // Draw the needle's back extension
-        let back_length = config::NEEDLE_BACK_LENGTH;
-        let back_x = (dial.cx as f64 - angle.cos() * back_length) as i32;
-        let back_y = (dial.cy as f64 - angle.sin() * back_length) as i32;
-        draw_thick_line_aa(canvas.frame, canvas.width, dial.cx, dial.cy, back_x, back_y, config::NEEDLE_WIDTH, color.0, color.1, color.2);
-
-        // Draw the needle's crossbar or dot
-        match config::DEFAULT_CROSSBAR_TYPE {
-            config::CrossbarType::BAR => {
-                let crossbar_length = config::NEEDLE_CROSSBAR_LENGTH;
-                let crossbar_thickness = config::NEEDLE_CROSSBAR_THICKNESS;
-                let crossbar_angle = angle + std::f64::consts::FRAC_PI_2; // Perpendicular to the needle
-                let crossbar_x1 = (dial.cx as f64 + crossbar_angle.cos() * (crossbar_length / 2.0)) as i32;
-                let crossbar_y1 = (dial.cy as f64 + crossbar_angle.sin() * (crossbar_length / 2.0)) as i32;
-                let crossbar_x2 = (dial.cx as f64 - crossbar_angle.cos() * (crossbar_length / 2.0)) as i32;
-                let crossbar_y2 = (dial.cy as f64 - crossbar_angle.sin() * (crossbar_length / 2.0)) as i32;
-                draw_thick_line_aa(canvas.frame, canvas.width, crossbar_x1, crossbar_y1, crossbar_x2, crossbar_y2, crossbar_thickness, color.0, color.1, color.2);
-            }
-            config::CrossbarType::DOT => {
-                let dot_radius = config::DOT_RADIUS as i32;
-                draw_circle(canvas.frame, canvas.width, dial.cx, dial.cy, dot_radius, color.0, color.1, color.2);
-            }
-        }
     }
 }
 
@@ -707,36 +471,14 @@ fn build_needle_commands(scene: &mut Scene, needle: &Needle, dial: &Dial, color:
         color,
     });
 
-    // Draw the needle's crossbar or dot
-    match config::DEFAULT_CROSSBAR_TYPE {
-        config::CrossbarType::BAR => {
-            let crossbar_length = config::NEEDLE_CROSSBAR_LENGTH;
-            let crossbar_thickness = config::NEEDLE_CROSSBAR_THICKNESS;
-            let crossbar_angle = angle + std::f64::consts::FRAC_PI_2; // Perpendicular to the needle
-            let crossbar_x1 = (dial.cx as f64 + crossbar_angle.cos() * (crossbar_length / 2.0)) as i32;
-            let crossbar_y1 = (dial.cy as f64 + crossbar_angle.sin() * (crossbar_length / 2.0)) as i32;
-            let crossbar_x2 = (dial.cx as f64 - crossbar_angle.cos() * (crossbar_length / 2.0)) as i32;
-            let crossbar_y2 = (dial.cy as f64 - crossbar_angle.sin() * (crossbar_length / 2.0)) as i32;
-            scene.add_command(DrawCommand::NeedleLine {
-                x0: crossbar_x1,
-                y0: crossbar_y1,
-                x1: crossbar_x2,
-                y1: crossbar_y2,
-                thickness: crossbar_thickness,
-                tapered: false,
-                color,
-            });
-        }
-        config::CrossbarType::DOT => {
-            let dot_radius = config::DOT_RADIUS as i32;
-            scene.add_command(DrawCommand::Circle {
-                cx: dial.cx,
-                cy: dial.cy,
-                radius: dot_radius,
-                color,
-            });
-        }
-    }
+    // Draw the needle's dot
+    let dot_radius = config::DOT_RADIUS as i32;
+    scene.add_command(DrawCommand::Circle {
+        cx: dial.cx,
+        cy: dial.cy,
+        radius: dot_radius,
+        color,
+    });
 }
 
 fn build_complication_dial_commands(scene: &mut Scene, dial: &Dial, range: (f64, f64), color: (u8, u8, u8)) {
@@ -752,8 +494,8 @@ fn build_complication_dial_commands(scene: &mut Scene, dial: &Dial, range: (f64,
     });
     
     // Add ticks and labels using mini_dial constants
-    for i in 0..mini_dial::NUM_TICKS {
-        let t = i as f64 / (mini_dial::NUM_TICKS as f64 - 1.0);
+    for i in 0..config::mini_dial::NUM_TICKS {
+        let t = i as f64 / (config::mini_dial::NUM_TICKS as f64 - 1.0);
         let angle = dial.start_angle + dial.arc_span * t;
         
         // Major tick
@@ -762,30 +504,30 @@ fn build_complication_dial_commands(scene: &mut Scene, dial: &Dial, range: (f64,
             cy: dial.cy,
             r: dial.r,
             angle,
-            length: mini_dial::TICK_LENGTH,
-            thickness: mini_dial::TICK_THICKNESS,
+            length: config::mini_dial::TICK_LENGTH,
+            thickness: config::mini_dial::TICK_THICKNESS,
             color,
         });
         
         // Minor ticks
-        if i < mini_dial::NUM_TICKS - 1 {
-            for j in 1..=mini_dial::MINOR_TICKS_PER_INTERVAL {
-                let minor_t = t + (j as f64 / (mini_dial::MINOR_TICKS_PER_INTERVAL as f64 * (mini_dial::NUM_TICKS as f64 - 1.0)));
+        if i < config::mini_dial::NUM_TICKS - 1 {
+            for j in 1..=config::mini_dial::MINOR_TICKS_PER_INTERVAL {
+                let minor_t = t + (j as f64 / (config::mini_dial::MINOR_TICKS_PER_INTERVAL as f64 * (config::mini_dial::NUM_TICKS as f64 - 1.0)));
                 let minor_angle = dial.start_angle + dial.arc_span * minor_t;
                 scene.add_command(DrawCommand::Tick {
                     cx: dial.cx,
                     cy: dial.cy,
                     r: dial.r,
                     angle: minor_angle,
-                    length: mini_dial::MINOR_TICK_LENGTH,
-                    thickness: mini_dial::MINOR_TICK_THICKNESS,
+                    length: config::mini_dial::MINOR_TICK_LENGTH,
+                    thickness: config::mini_dial::MINOR_TICK_THICKNESS,
                     color,
                 });
             }
         }
         
         // Number labels with smaller font
-        let label_radius = dial.r as f64 - mini_dial::TICK_LENGTH as f64 - mini_dial::TICKS_TO_NUMBERS_DISTANCE;
+        let label_radius = dial.r as f64 - config::mini_dial::TICK_LENGTH as f64 - config::mini_dial::TICKS_TO_NUMBERS_DISTANCE;
         let label_x = dial.cx as f64 + angle.cos() * label_radius;
         let label_y = dial.cy as f64 + angle.sin() * label_radius;
         let value = range.0 + t * (range.1 - range.0);
@@ -794,7 +536,7 @@ fn build_complication_dial_commands(scene: &mut Scene, dial: &Dial, range: (f64,
             x: label_x as i32,
             y: label_y as i32,
             text: value_str,
-            font_size: mini_dial::DIAL_NUMBERS_FONT_SIZE,
+            font_size: config::mini_dial::DIAL_NUMBERS_FONT_SIZE,
             color,
         });
     }
@@ -802,7 +544,7 @@ fn build_complication_dial_commands(scene: &mut Scene, dial: &Dial, range: (f64,
 
 fn build_complication_needle_commands(scene: &mut Scene, needle: &Needle, dial: &Dial, color: (u8, u8, u8)) {
     let angle = dial.start_angle + dial.arc_span * needle.pos;
-    let needle_length = dial.r as f64 * mini_dial::NEEDLE_LENGTH_FACTOR;
+    let needle_length = dial.r as f64 * config::mini_dial::NEEDLE_LENGTH_FACTOR;
     let nx = (dial.cx as f64 + angle.cos() * needle_length) as i32;
     let ny = (dial.cy as f64 + angle.sin() * needle_length) as i32;
 
@@ -812,13 +554,13 @@ fn build_complication_needle_commands(scene: &mut Scene, needle: &Needle, dial: 
         y0: dial.cy,
         x1: nx,
         y1: ny,
-        thickness: mini_dial::NEEDLE_WIDTH,
+        thickness: config::mini_dial::NEEDLE_WIDTH,
         tapered: true,
         color,
     });
 
     // Draw the needle's back extension using mini_dial constants
-    let back_length = mini_dial::NEEDLE_BACK_LENGTH;
+    let back_length = config::mini_dial::NEEDLE_BACK_LENGTH;
     let back_x = (dial.cx as f64 - angle.cos() * back_length) as i32;
     let back_y = (dial.cy as f64 - angle.sin() * back_length) as i32;
     scene.add_command(DrawCommand::NeedleLine {
@@ -826,41 +568,19 @@ fn build_complication_needle_commands(scene: &mut Scene, needle: &Needle, dial: 
         y0: dial.cy,
         x1: back_x,
         y1: back_y,
-        thickness: mini_dial::NEEDLE_WIDTH,
+        thickness: config::mini_dial::NEEDLE_WIDTH,
         tapered: false,
         color,
     });
 
-    // Draw the needle's crossbar or dot using mini_dial constants
-    match mini_dial::DEFAULT_CROSSBAR_TYPE {
-        mini_dial::CrossbarType::BAR => {
-            let crossbar_length = mini_dial::NEEDLE_CROSSBAR_LENGTH;
-            let crossbar_thickness = mini_dial::NEEDLE_CROSSBAR_THICKNESS;
-            let crossbar_angle = angle + std::f64::consts::FRAC_PI_2; // Perpendicular to the needle
-            let crossbar_x1 = (dial.cx as f64 + crossbar_angle.cos() * (crossbar_length / 2.0)) as i32;
-            let crossbar_y1 = (dial.cy as f64 + crossbar_angle.sin() * (crossbar_length / 2.0)) as i32;
-            let crossbar_x2 = (dial.cx as f64 - crossbar_angle.cos() * (crossbar_length / 2.0)) as i32;
-            let crossbar_y2 = (dial.cy as f64 - crossbar_angle.sin() * (crossbar_length / 2.0)) as i32;
-            scene.add_command(DrawCommand::NeedleLine {
-                x0: crossbar_x1,
-                y0: crossbar_y1,
-                x1: crossbar_x2,
-                y1: crossbar_y2,
-                thickness: crossbar_thickness,
-                tapered: false,
-                color,
-            });
-        }
-        mini_dial::CrossbarType::DOT => {
-            let dot_radius = mini_dial::DOT_RADIUS as i32;
-            scene.add_command(DrawCommand::Circle {
-                cx: dial.cx,
-                cy: dial.cy,
-                radius: dot_radius,
-                color,
-            });
-        }
-    }
+    // Draw the needle's dot using mini_dial constants
+    let dot_radius = config::mini_dial::DOT_RADIUS as i32;
+    scene.add_command(DrawCommand::Circle {
+        cx: dial.cx,
+        cy: dial.cy,
+        radius: dot_radius,
+        color,
+    });
 }
 
 fn build_readout_commands(scene: &mut Scene, canvas: &Canvas, value: f64, color: (u8, u8, u8)) {
@@ -1081,32 +801,6 @@ fn render_instrument(canvas: &mut Canvas, state: &AppState) {
     scene.render(canvas);
 }
 
-fn draw_readout(canvas: &mut Canvas, value: f64, color: (u8, u8, u8)) {
-    let value_int = value.trunc() as i32;
-    let value_frac = ((value.fract() * 1000.0).round() as u32).min(999);
-    let label_x = (canvas.width as f64 * config::READOUT_X_FACTOR) as i32;
-    let label_y = (canvas.height as f64 * config::READOUT_Y_FACTOR) as i32;
-
-    let font = Font::try_from_vec(config::FONT_DATA.to_vec()).expect("Error loading font");
-
-    // Draw integer part in big font
-    let scale_big = Scale::uniform(config::READOUT_BIG_FONT_SIZE);
-    let value_str = format!("{}", value_int);
-    draw_text(canvas.frame, canvas.width, canvas.height, label_x, label_y, &value_str, &font, scale_big, color);
-
-    // Draw fractional part in smaller font
-    let int_str = format!("{}", value_int);
-    let int_width = calculate_text_width(&int_str, &font, scale_big);
-    let scale_small = Scale::uniform(config::READOUT_SMALL_FONT_SIZE);
-    let frac_str = format!("{:03}", value_frac);
-    let frac_x = label_x + int_width / 2 + 28;
-    let frac_y = label_y + 2;
-    draw_text(canvas.frame, canvas.width, canvas.height, frac_x, frac_y, &frac_str, &font, scale_small, color);
-
-    // Draw box around readout
-    draw_readout_box(canvas, label_x, label_y, frac_x, frac_y, &int_str, color);
-}
-
 fn calculate_text_width(text: &str, font: &Font, scale: Scale) -> i32 {
     use rusttype::{point, PositionedGlyph};
     let glyphs: Vec<PositionedGlyph> = font.layout(text, scale, point(0.0, 0.0)).collect();
@@ -1117,33 +811,6 @@ fn calculate_text_width(text: &str, font: &Font, scale: Scale) -> i32 {
         },
     );
     if min_x < max_x { max_x - min_x } else { 0 }
-}
-
-fn draw_readout_box(canvas: &mut Canvas, label_x: i32, label_y: i32, frac_x: i32, frac_y: i32, int_str: &str, color: (u8, u8, u8)) {
-    let box_padding = config::READOUT_BOX_PADDING;
-    let box_thickness = config::READOUT_BOX_THICKNESS;
-    let font_size = (config::READOUT_BIG_FONT_SIZE / 11.0) as i32;
-    
-    let box_left = label_x - box_padding - font_size * int_str.len() as i32;
-    let box_top = label_y - box_padding;
-    let box_right = frac_x + box_padding + 5;
-    let box_bottom = frac_y + box_padding;
-
-    // Draw box lines
-    draw_thick_line_aa(canvas.frame, canvas.width, box_left, box_top, box_right, box_top, box_thickness as f32, color.0, color.1, color.2);
-    draw_thick_line_aa(canvas.frame, canvas.width, box_left, box_bottom, box_right, box_bottom, box_thickness as f32, color.0, color.1, color.2);
-    draw_thick_line_aa(canvas.frame, canvas.width, box_left, box_top, box_left, box_bottom, box_thickness as f32, color.0, color.1, color.2);
-    draw_thick_line_aa(canvas.frame, canvas.width, box_right, box_top, box_right, box_bottom, box_thickness as f32, color.0, color.1, color.2);
-}
-
-fn draw_warning(canvas: &mut Canvas, dial: &Dial) {
-    let exclamation_x = dial.cx;
-    let exclamation_y = dial.cy - (dial.r / 4);
-    let font = Font::try_from_vec(config::FONT_DATA.to_vec()).expect("Error loading font");
-    let scale = Scale::uniform(config::EXCLAMATION_MARK_FONT_SIZE);
-    let exclamation_str = "!";
-    let exclamation_color = (0xff, 0x00, 0x00);
-    draw_text(canvas.frame, canvas.width, canvas.height, exclamation_x, exclamation_y, exclamation_str, &font, scale, exclamation_color);
 }
 
 fn main() {

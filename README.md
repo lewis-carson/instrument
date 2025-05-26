@@ -6,6 +6,10 @@ I'm following the suckless convention of having a config.rs file and you'll have
 
 You might have to bring your own font. See config.rs.
 
+Eventually, I'd like to build this into a full, prescriptivist, gui framework. Something to the taste of @usgraphics.
+
+You should have to meticulously craft your instrument layouts but they should be unchanging.
+
 ## Command Line Options
 
 - `--range <min> <max>` - Set the dial range (default: 0 100)
@@ -59,8 +63,7 @@ echo "42.5" | ./instrument --range 0 100
 
 TODO:
 
-- ~~Highlight range flag~~ ✓
-- ~~Multiple needles~~ ✓  
 - Needle head types
-- Allow window resizing but keep aspect ratio
-- Only redraw needle and readout
+- Config as a single struct instead of constants
+- Make complications not just a replacement for the second needle
+- Redo readouts to be more flexible
