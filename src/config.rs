@@ -143,7 +143,7 @@ impl Default for FontConfig {
 /// Configuration for curved text display
 #[derive(Debug, Clone)]
 pub struct CurvedTextConfig {
-    pub text: &'static str,
+    pub text: String,
     pub font_size: f32,
     pub radius_offset: f64,
     pub arc_span: f64,
@@ -153,7 +153,7 @@ pub struct CurvedTextConfig {
 impl Default for CurvedTextConfig {
     fn default() -> Self {
         Self {
-            text: "INSTRUMENT GAUGE",
+            text: "INSTRUMENT GAUGE".to_string(),
             font_size: 30.0,  // Reduced from 60.0 for better rendering
             radius_offset: 15.0,
             arc_span: std::f64::consts::PI * 0.23,
@@ -238,9 +238,6 @@ impl Config {
         Self::default()
     }
 }
-
-/// Global configuration instance
-pub static CONFIG: std::sync::LazyLock<Config> = std::sync::LazyLock::new(|| Config::new());
 
 /// Mini dial (complication) configuration module
 pub mod mini_dial {
