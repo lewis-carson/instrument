@@ -67,3 +67,4 @@ TODO:
 - Config as a single struct instead of constants
 - Make complications not just a replacement for the second needle
 - Redo readouts to be more flexible
+- Redo input formatting

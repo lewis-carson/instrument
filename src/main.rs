@@ -97,12 +97,12 @@ impl Scene {
                     );
                 }
                 DrawCommand::Text { x, y, text, font_size, color } => {
-                    let font = Font::try_from_vec(config::FONT_DATA.to_vec()).expect("Error loading font");
+                    let font = Font::try_from_vec(config::CONFIG.font.data.to_vec()).expect("Error loading font");
                     let scale = Scale::uniform(*font_size);
                     draw_text(canvas.frame, canvas.width, canvas.height, *x, *y, text, &font, scale, *color);
                 }
                 DrawCommand::CurvedText { cx, cy, radius, text, font_size, arc_span, start_angle, color } => {
-                    let font = Font::try_from_vec(config::FONT_DATA.to_vec()).expect("Error loading font");
+                    let font = Font::try_from_vec(config::CONFIG.font.data.to_vec()).expect("Error loading font");
                     let scale = Scale::uniform(*font_size);
                     draw_curved_text(canvas, *cx, *cy, *radius, text, &font, scale, *arc_span, *start_angle, *color);
                 }
@@ -311,20 +311,20 @@ impl Dial {
     fn new(width: usize, height: usize) -> Self {
         let cx = width as i32 / 2;
         let cy = height as i32 / 2;
-        let r = (width.min(height) as i32) / 2 - config::DIAL_MARGIN;
+        let r = (width.min(height) as i32) / 2 - config::CONFIG.dial.margin;
         let arc_span = std::f64::consts::PI * 1.5;
         let start_angle = std::f64::consts::FRAC_PI_2;
-        Self { cx, cy, r, thickness: config::DIAL_THICKNESS, arc_span, start_angle }
+        Self { cx, cy, r, thickness: config::CONFIG.dial.thickness, arc_span, start_angle }
     }
 
     fn new_complication(width: usize, height: usize) -> Self {
         // Create a smaller dial for the needle2 complication
-        let r = ((width.min(height) as f64) / config::COMPLICATION_SIZE) as i32 - config::mini_dial::DIAL_MARGIN; // Much smaller radius
+        let r = ((width.min(height) as f64) / config::CONFIG.complication.size) as i32 - config::CONFIG.mini_dial.dial.margin; // Much smaller radius
         let cx = width as i32 / 2; // Center horizontally
-        let cy = r + config::mini_dial::DIAL_MARGIN + config::COMPLICATION_SHIFT; // Position in top middle with configurable offset
+        let cy = r + config::CONFIG.mini_dial.dial.margin + config::CONFIG.complication.shift; // Position in top middle with configurable offset
         let arc_span = std::f64::consts::PI * 1.5;
         let start_angle = std::f64::consts::FRAC_PI_2;
-        Self { cx, cy, r, thickness: config::mini_dial::DIAL_THICKNESS, arc_span, start_angle }
+        Self { cx, cy, r, thickness: config::CONFIG.mini_dial.dial.thickness, arc_span, start_angle }
     }
 }
 
@@ -385,7 +385,7 @@ fn build_dial_commands(scene: &mut Scene, dial: &Dial, range: (f64, f64), color:
             r: dial.r,
             start_angle,
             end_angle,
-            inner_radius: config::HIGHLIGHT_BAND_WIDTH as f64,
+            inner_radius: config::CONFIG.highlight_band.width as f64,
             outer_radius: 0.0,
         });
     }
@@ -402,8 +402,8 @@ fn build_dial_commands(scene: &mut Scene, dial: &Dial, range: (f64, f64), color:
     });
     
     // Add ticks and labels
-    for i in 0..config::NUM_TICKS {
-        let t = i as f64 / (config::NUM_TICKS as f64 - 1.0);
+    for i in 0..config::CONFIG.ticks.num_ticks {
+        let t = i as f64 / (config::CONFIG.ticks.num_ticks as f64 - 1.0);
         let angle = dial.start_angle + dial.arc_span * t;
         
         // Major tick
@@ -412,30 +412,30 @@ fn build_dial_commands(scene: &mut Scene, dial: &Dial, range: (f64, f64), color:
             cy: dial.cy,
             r: dial.r,
             angle,
-            length: config::TICK_LENGTH,
-            thickness: config::TICK_THICKNESS,
+            length: config::CONFIG.ticks.major_length,
+            thickness: config::CONFIG.ticks.major_thickness,
             color,
         });
         
         // Minor ticks
-        if i < config::NUM_TICKS - 1 {
-            for j in 1..=config::MINOR_TICKS_PER_INTERVAL {
-                let minor_t = t + (j as f64 / (config::MINOR_TICKS_PER_INTERVAL as f64 * (config::NUM_TICKS as f64 - 1.0)));
+        if i < config::CONFIG.ticks.num_ticks - 1 {
+            for j in 1..=config::CONFIG.ticks.minor_ticks_per_interval {
+                let minor_t = t + (j as f64 / (config::CONFIG.ticks.minor_ticks_per_interval as f64 * (config::CONFIG.ticks.num_ticks as f64 - 1.0)));
                 let minor_angle = dial.start_angle + dial.arc_span * minor_t;
                 scene.add_command(DrawCommand::Tick {
                     cx: dial.cx,
                     cy: dial.cy,
                     r: dial.r,
                     angle: minor_angle,
-                    length: config::MINOR_TICK_LENGTH,
-                    thickness: config::MINOR_TICK_THICKNESS,
+                    length: config::CONFIG.ticks.minor_length,
+                    thickness: config::CONFIG.ticks.minor_thickness,
                     color,
                 });
             }
         }
         
         // Number labels
-        let label_radius = dial.r as f64 - config::TICK_LENGTH as f64 - config::TICKS_TO_NUMBERS_DISTANCE;
+        let label_radius = dial.r as f64 - config::CONFIG.ticks.major_length as f64 - config::CONFIG.dial.ticks_to_numbers_distance;
         let label_x = dial.cx as f64 + angle.cos() * label_radius;
         let label_y = dial.cy as f64 + angle.sin() * label_radius;
         let value = range.0 + t * (range.1 - range.0);
@@ -444,7 +444,7 @@ fn build_dial_commands(scene: &mut Scene, dial: &Dial, range: (f64, f64), color:
             x: label_x as i32,
             y: label_y as i32,
             text: value_str,
-            font_size: config::DIAL_NUMBERS_FONT_SIZE,
+            font_size: config::CONFIG.dial.numbers_font_size,
             color,
         });
     }
@@ -452,7 +452,7 @@ fn build_dial_commands(scene: &mut Scene, dial: &Dial, range: (f64, f64), color:
 
 fn build_needle_commands(scene: &mut Scene, needle: &Needle, dial: &Dial, color: (u8, u8, u8)) {
     let angle = dial.start_angle + dial.arc_span * needle.pos;
-    let needle_length = dial.r as f64 * config::NEEDLE_LENGTH_FACTOR;
+    let needle_length = dial.r as f64 * config::CONFIG.needle.length_factor;
     let nx = (dial.cx as f64 + angle.cos() * needle_length) as i32;
     let ny = (dial.cy as f64 + angle.sin() * needle_length) as i32;
 
@@ -462,13 +462,13 @@ fn build_needle_commands(scene: &mut Scene, needle: &Needle, dial: &Dial, color:
         y0: dial.cy,
         x1: nx,
         y1: ny,
-        thickness: config::NEEDLE_WIDTH,
+        thickness: config::CONFIG.needle.width,
         tapered: true,
         color,
     });
 
     // Draw the needle's back extension
-    let back_length = config::NEEDLE_BACK_LENGTH;
+    let back_length = config::CONFIG.needle.back_length;
     let back_x = (dial.cx as f64 - angle.cos() * back_length) as i32;
     let back_y = (dial.cy as f64 - angle.sin() * back_length) as i32;
     scene.add_command(DrawCommand::NeedleLine {
@@ -476,13 +476,13 @@ fn build_needle_commands(scene: &mut Scene, needle: &Needle, dial: &Dial, color:
         y0: dial.cy,
         x1: back_x,
         y1: back_y,
-        thickness: config::NEEDLE_WIDTH,
+        thickness: config::CONFIG.needle.width,
         tapered: false,
         color,
     });
 
     // Draw the needle's dot
-    let dot_radius = config::DOT_RADIUS as i32;
+    let dot_radius = config::CONFIG.font.dot_radius as i32;
     scene.add_command(DrawCommand::Circle {
         cx: dial.cx,
         cy: dial.cy,
@@ -504,8 +504,8 @@ fn build_complication_dial_commands(scene: &mut Scene, dial: &Dial, range: (f64,
     });
     
     // Add ticks and labels using mini_dial constants
-    for i in 0..config::mini_dial::NUM_TICKS {
-        let t = i as f64 / (config::mini_dial::NUM_TICKS as f64 - 1.0);
+    for i in 0..config::CONFIG.mini_dial.ticks.num_ticks {
+        let t = i as f64 / (config::CONFIG.mini_dial.ticks.num_ticks as f64 - 1.0);
         let angle = dial.start_angle + dial.arc_span * t;
         
         // Major tick
@@ -514,30 +514,30 @@ fn build_complication_dial_commands(scene: &mut Scene, dial: &Dial, range: (f64,
             cy: dial.cy,
             r: dial.r,
             angle,
-            length: config::mini_dial::TICK_LENGTH,
-            thickness: config::mini_dial::TICK_THICKNESS,
+            length: config::CONFIG.mini_dial.ticks.major_length,
+            thickness: config::CONFIG.mini_dial.ticks.major_thickness,
             color,
         });
         
         // Minor ticks
-        if i < config::mini_dial::NUM_TICKS - 1 {
-            for j in 1..=config::mini_dial::MINOR_TICKS_PER_INTERVAL {
-                let minor_t = t + (j as f64 / (config::mini_dial::MINOR_TICKS_PER_INTERVAL as f64 * (config::mini_dial::NUM_TICKS as f64 - 1.0)));
+        if i < config::CONFIG.mini_dial.ticks.num_ticks - 1 {
+            for j in 1..=config::CONFIG.mini_dial.ticks.minor_ticks_per_interval {
+                let minor_t = t + (j as f64 / (config::CONFIG.mini_dial.ticks.minor_ticks_per_interval as f64 * (config::CONFIG.mini_dial.ticks.num_ticks as f64 - 1.0)));
                 let minor_angle = dial.start_angle + dial.arc_span * minor_t;
                 scene.add_command(DrawCommand::Tick {
                     cx: dial.cx,
                     cy: dial.cy,
                     r: dial.r,
                     angle: minor_angle,
-                    length: config::mini_dial::MINOR_TICK_LENGTH,
-                    thickness: config::mini_dial::MINOR_TICK_THICKNESS,
+                    length: config::CONFIG.mini_dial.ticks.minor_length,
+                    thickness: config::CONFIG.mini_dial.ticks.minor_thickness,
                     color,
                 });
             }
         }
         
         // Number labels with smaller font
-        let label_radius = dial.r as f64 - config::mini_dial::TICK_LENGTH as f64 - config::mini_dial::TICKS_TO_NUMBERS_DISTANCE;
+        let label_radius = dial.r as f64 - config::CONFIG.mini_dial.ticks.major_length as f64 - config::CONFIG.mini_dial.dial.ticks_to_numbers_distance;
         let label_x = dial.cx as f64 + angle.cos() * label_radius;
         let label_y = dial.cy as f64 + angle.sin() * label_radius;
         let value = range.0 + t * (range.1 - range.0);
@@ -546,7 +546,7 @@ fn build_complication_dial_commands(scene: &mut Scene, dial: &Dial, range: (f64,
             x: label_x as i32,
             y: label_y as i32,
             text: value_str,
-            font_size: config::mini_dial::DIAL_NUMBERS_FONT_SIZE,
+            font_size: config::CONFIG.mini_dial.dial.numbers_font_size,
             color,
         });
     }
@@ -554,7 +554,7 @@ fn build_complication_dial_commands(scene: &mut Scene, dial: &Dial, range: (f64,
 
 fn build_complication_needle_commands(scene: &mut Scene, needle: &Needle, dial: &Dial, color: (u8, u8, u8)) {
     let angle = dial.start_angle + dial.arc_span * needle.pos;
-    let needle_length = dial.r as f64 * config::mini_dial::NEEDLE_LENGTH_FACTOR;
+    let needle_length = dial.r as f64 * config::CONFIG.mini_dial.needle.length_factor;
     let nx = (dial.cx as f64 + angle.cos() * needle_length) as i32;
     let ny = (dial.cy as f64 + angle.sin() * needle_length) as i32;
 
@@ -564,13 +564,13 @@ fn build_complication_needle_commands(scene: &mut Scene, needle: &Needle, dial: 
         y0: dial.cy,
         x1: nx,
         y1: ny,
-        thickness: config::mini_dial::NEEDLE_WIDTH,
+        thickness: config::CONFIG.mini_dial.needle.width,
         tapered: true,
         color,
     });
 
     // Draw the needle's back extension using mini_dial constants
-    let back_length = config::mini_dial::NEEDLE_BACK_LENGTH;
+    let back_length = config::CONFIG.mini_dial.needle.back_length;
     let back_x = (dial.cx as f64 - angle.cos() * back_length) as i32;
     let back_y = (dial.cy as f64 - angle.sin() * back_length) as i32;
     scene.add_command(DrawCommand::NeedleLine {
@@ -578,13 +578,13 @@ fn build_complication_needle_commands(scene: &mut Scene, needle: &Needle, dial: 
         y0: dial.cy,
         x1: back_x,
         y1: back_y,
-        thickness: config::mini_dial::NEEDLE_WIDTH,
+        thickness: config::CONFIG.mini_dial.needle.width,
         tapered: false,
         color,
     });
 
     // Draw the needle's dot using mini_dial constants
-    let dot_radius = config::mini_dial::DOT_RADIUS as i32;
+    let dot_radius = config::CONFIG.mini_dial.dial.dot_radius as i32;
     scene.add_command(DrawCommand::Circle {
         cx: dial.cx,
         cy: dial.cy,
@@ -596,8 +596,8 @@ fn build_complication_needle_commands(scene: &mut Scene, needle: &Needle, dial: 
 fn build_readout_commands(scene: &mut Scene, canvas: &Canvas, value: f64, color: (u8, u8, u8)) {
     let value_int = value.trunc() as i32;
     let value_frac = ((value.fract() * 1000.0).round() as u32).min(999);
-    let label_x = (canvas.width as f64 * config::READOUT_X_FACTOR) as i32;
-    let label_y = (canvas.height as f64 * config::READOUT_Y_FACTOR) as i32;
+    let label_x = (canvas.width as f64 * config::CONFIG.readout.x_factor) as i32;
+    let label_y = (canvas.height as f64 * config::CONFIG.readout.y_factor) as i32;
 
     // Integer part in big font
     let value_str = format!("{}", value_int);
@@ -605,13 +605,13 @@ fn build_readout_commands(scene: &mut Scene, canvas: &Canvas, value: f64, color:
         x: label_x,
         y: label_y,
         text: value_str.clone(),
-        font_size: config::READOUT_BIG_FONT_SIZE,
+        font_size: config::CONFIG.readout.big_font_size,
         color,
     });
 
     // Fractional part in smaller font
-    let font = Font::try_from_vec(config::FONT_DATA.to_vec()).expect("Error loading font");
-    let scale_big = Scale::uniform(config::READOUT_BIG_FONT_SIZE);
+    let font = Font::try_from_vec(config::CONFIG.font.data.to_vec()).expect("Error loading font");
+    let scale_big = Scale::uniform(config::CONFIG.readout.big_font_size);
     let int_width = calculate_text_width(&value_str, &font, scale_big);
     let frac_str = format!("{:03}", value_frac);
     let frac_x = label_x + int_width / 2 + 28;
@@ -620,7 +620,7 @@ fn build_readout_commands(scene: &mut Scene, canvas: &Canvas, value: f64, color:
         x: frac_x,
         y: frac_y,
         text: frac_str,
-        font_size: config::READOUT_SMALL_FONT_SIZE,
+        font_size: config::CONFIG.readout.small_font_size,
         color,
     });
 
@@ -630,9 +630,9 @@ fn build_readout_commands(scene: &mut Scene, canvas: &Canvas, value: f64, color:
 }
 
 fn build_readout_box_commands(scene: &mut Scene, label_x: i32, label_y: i32, frac_x: i32, frac_y: i32, int_str: &str, color: (u8, u8, u8)) {
-    let box_padding = config::READOUT_BOX_PADDING;
-    let box_thickness = config::READOUT_BOX_THICKNESS;
-    let font_size = (config::READOUT_BIG_FONT_SIZE / 11.0) as i32;
+    let box_padding = config::CONFIG.readout.box_padding;
+    let box_thickness = config::CONFIG.readout.box_thickness;
+    let font_size = (config::CONFIG.readout.big_font_size / 11.0) as i32;
     
     let box_left = label_x - box_padding - font_size * int_str.len() as i32;
     let box_top = label_y - box_padding;
@@ -667,22 +667,22 @@ fn build_warning_commands(scene: &mut Scene, dial: &Dial) {
         x: exclamation_x,
         y: exclamation_y,
         text: exclamation_str.to_string(),
-        font_size: config::EXCLAMATION_MARK_FONT_SIZE,
+        font_size: config::CONFIG.font.exclamation_mark_size,
         color: exclamation_color,
     });
 }
 
 fn build_curved_text_commands(scene: &mut Scene, dial: &Dial, color: (u8, u8, u8)) {
-    let text_radius = dial.r as f64 + config::CURVED_TEXT_RADIUS_OFFSET;
-    let text_start_angle = config::CURVED_TEXT_ANGLE; // Use the configured center angle directly
+    let text_radius = dial.r as f64 + config::CONFIG.curved_text.radius_offset;
+    let text_start_angle = config::CONFIG.curved_text.angle; // Use the configured center angle directly
     
     scene.add_command(DrawCommand::CurvedText {
         cx: dial.cx,
         cy: dial.cy,
         radius: text_radius,
-        text: config::CURVED_TEXT.to_string(),
-        font_size: config::CURVED_TEXT_FONT_SIZE,
-        arc_span: config::CURVED_TEXT_ARC_SPAN,
+        text: config::CONFIG.curved_text.text.to_string(),
+        font_size: config::CONFIG.curved_text.font_size,
+        arc_span: config::CONFIG.curved_text.arc_span,
         start_angle: text_start_angle,
         color,
     });
@@ -805,7 +805,7 @@ fn render_instrument(canvas: &mut Canvas, state: &AppState) {
             (0x00, 0x7f, 0xff) // Blue for needle2
         };
         
-        if config::NEEDLE2_USE_COMPLICATION {
+        if config::CONFIG.complication.use_complication {
             // Draw needle2 on a smaller complication dial in the top middle
             let complication_dial = Dial::new_complication(canvas.width, canvas.height);
             build_complication_dial_commands(&mut scene, &complication_dial, (state.min_value, state.max_value), (0x00, 0x00, 0x00)); // Black dial
@@ -858,8 +858,8 @@ fn main() {
     let receiver = spawn_input_thread();
     
     // Set up window and graphics
-    let logical_width: usize = config::WINDOW_WIDTH;
-    let logical_height: usize = config::WINDOW_HEIGHT;
+    let logical_width: usize = config::CONFIG.window.width;
+    let logical_height: usize = config::CONFIG.window.height;
     let event_loop = EventLoop::new().unwrap();
     let window = WindowBuilder::new()
         .with_title(&window_title)
@@ -879,7 +879,7 @@ fn main() {
     };
     
     // Frame timing
-    let target_fps = config::MAX_FRAMERATE;
+    let target_fps = config::CONFIG.window.max_framerate;
     let frame_duration = std::time::Duration::from_secs_f64(1.0 / target_fps);
     let mut last_frame = Instant::now();
 
@@ -999,7 +999,7 @@ fn draw_thick_line_tapered_aa(frame: &mut [u8], width: usize, x0: i32, y0: i32, 
 }
 
 fn lerp(current: f64, target: f64) -> f64 {
-    current + (target - current) * config::LERP_FACTOR
+    current + (target - current) * config::CONFIG.needle.lerp_factor
 }
 
 fn draw_text(frame: &mut [u8], width: usize, height: usize, x: i32, y: i32, text: &str, font: &rusttype::Font, scale: rusttype::Scale, color: (u8, u8, u8)) {
@@ -1099,7 +1099,7 @@ fn draw_rotated_glyph_improved(canvas: &mut Canvas, glyph: &rusttype::Positioned
         
         // Draw each pixel of the glyph with sub-pixel accuracy
         glyph.draw(|gx, gy, v| {
-            if v > 0.01 {  // Only draw visible pixels
+            if v > 0.001 {  // Lower threshold for better coverage
                 // Get pixel position relative to glyph origin
                 let px = gx as f64 + bb.min.x as f64;
                 let py = gy as f64 + bb.min.y as f64;
@@ -1143,7 +1143,7 @@ fn draw_antialiased_pixel(canvas: &mut Canvas, x: f64, y: f64, color: (u8, u8, u
     for (px, py, weight) in samples.iter() {
         if *px >= 0 && *px < canvas.width as i32 && *py >= 0 && *py < canvas.height as i32 {
             let final_alpha = alpha * (*weight as f32);
-            if final_alpha > 0.01 {
+            if final_alpha > 0.001 {  // Lower threshold for better coverage
                 set_pixel(canvas.frame, canvas.width, *px as usize, *py as usize, color.0, color.1, color.2, final_alpha);
             }
         }
@@ -1231,9 +1231,9 @@ fn render_highlight_band_immediate(canvas: &mut Canvas, cx: i32, cy: i32, r: i32
             if start_angle <= end_angle {
                 // Normal case: start < end
                 if angle < start_angle {
-                    angular_alpha = 1.0 - ((start_angle - angle).min(config::HIGHLIGHT_EDGE_SOFTNESS) / config::HIGHLIGHT_EDGE_SOFTNESS);
+                    angular_alpha = 1.0 - ((start_angle - angle).min(config::CONFIG.highlight_band.edge_softness) / config::CONFIG.highlight_band.edge_softness);
                 } else if angle > end_angle {
-                    angular_alpha = 1.0 - ((angle - end_angle).min(config::HIGHLIGHT_EDGE_SOFTNESS) / config::HIGHLIGHT_EDGE_SOFTNESS);
+                    angular_alpha = 1.0 - ((angle - end_angle).min(config::CONFIG.highlight_band.edge_softness) / config::CONFIG.highlight_band.edge_softness);
                 }
                 if angle < start_angle || angle > end_angle {
                     angular_alpha = angular_alpha.max(0.0);
@@ -1242,10 +1242,10 @@ fn render_highlight_band_immediate(canvas: &mut Canvas, cx: i32, cy: i32, r: i32
                 // Wrap case: start > end (crosses 0 degrees)
                 if angle < end_angle {
                     // Close to end edge
-                    angular_alpha = 1.0 - ((end_angle - angle).min(config::HIGHLIGHT_EDGE_SOFTNESS) / config::HIGHLIGHT_EDGE_SOFTNESS).max(0.0);
+                    angular_alpha = 1.0 - ((end_angle - angle).min(config::CONFIG.highlight_band.edge_softness) / config::CONFIG.highlight_band.edge_softness).max(0.0);
                 } else if angle > start_angle {
                     // Close to start edge  
-                    angular_alpha = 1.0 - ((angle - start_angle).min(config::HIGHLIGHT_EDGE_SOFTNESS) / config::HIGHLIGHT_EDGE_SOFTNESS).max(0.0);
+                    angular_alpha = 1.0 - ((angle - start_angle).min(config::CONFIG.highlight_band.edge_softness) / config::CONFIG.highlight_band.edge_softness).max(0.0);
                 } else {
                     // Between end and start (outside the arc)
                     let dist_to_start = if start_angle > angle {
@@ -1259,7 +1259,7 @@ fn render_highlight_band_immediate(canvas: &mut Canvas, cx: i32, cy: i32, r: i32
                         end_angle + 2.0 * std::f64::consts::PI - angle
                     };
                     let min_dist = dist_to_start.min(dist_to_end);
-                    angular_alpha = 1.0 - (min_dist.min(config::HIGHLIGHT_EDGE_SOFTNESS) / config::HIGHLIGHT_EDGE_SOFTNESS);
+                    angular_alpha = 1.0 - (min_dist.min(config::CONFIG.highlight_band.edge_softness) / config::CONFIG.highlight_band.edge_softness);
                     angular_alpha = angular_alpha.max(0.0);
                 }
             }
@@ -1279,11 +1279,12 @@ fn render_highlight_band_immediate(canvas: &mut Canvas, cx: i32, cy: i32, r: i32
                 0.0
             };
             
-            let final_alpha = (angular_alpha * radial_alpha * config::HIGHLIGHT_ALPHA).clamp(0.0, 1.0);
+            let final_alpha = (angular_alpha * radial_alpha * config::CONFIG.highlight_band.alpha).clamp(0.0, 1.0);
             
             if final_alpha > 0.01 {
+                let color = config::CONFIG.highlight_band.color.as_tuple();
                 set_pixel(canvas.frame, canvas.width, x as usize, y as usize, 
-                        config::HIGHLIGHT_COLOR.0, config::HIGHLIGHT_COLOR.1, config::HIGHLIGHT_COLOR.2, final_alpha as f32);
+                        color.0, color.1, color.2, final_alpha as f32);
             }
         }
     }

@@ -1,75 +1,353 @@
-pub const NUM_TICKS: usize = 11; // Number of major ticks
-pub const MINOR_TICKS_PER_INTERVAL: usize = 5; // Number of minor ticks between each major tick
-pub const TICK_LENGTH: i32 = 40; // Length of major ticks
-pub const MINOR_TICK_LENGTH: i32 = 25; // Length of minor ticks
-pub const TICK_THICKNESS: f32 = 2.0; // Thickness of major ticks
-pub const MINOR_TICK_THICKNESS: f32 = 0.5; // Thickness of minor ticks
+/// Color representation for gauge elements
+#[derive(Debug, Clone, Copy)]
+pub struct Color {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+}
 
-pub const DIAL_MARGIN: i32 = 45; // Margin around the dial
-pub const DIAL_THICKNESS: i32 = 4; // Thickness of the dial arc
-pub const DIAL_NUMBERS_FONT_SIZE: f32 = 30.0; // Font size for the dial numbers
+impl Color {
+    pub const fn new(r: u8, g: u8, b: u8) -> Self {
+        Self { r, g, b }
+    }
+    
+    pub const fn as_tuple(self) -> (u8, u8, u8) {
+        (self.r, self.g, self.b)
+    }
+}
 
-pub const TICKS_TO_NUMBERS_DISTANCE: f64 = 30.0; // Distance between the ticks and the numbers on the dial
+/// Configuration for tick marks on the dial
+#[derive(Debug, Clone)]
+pub struct TickConfig {
+    pub num_ticks: usize,
+    pub minor_ticks_per_interval: usize,
+    pub major_length: i32,
+    pub minor_length: i32,
+    pub major_thickness: f32,
+    pub minor_thickness: f32,
+}
 
-pub const NEEDLE_LENGTH_FACTOR: f64 = 1.05; // Factor to scale the needle length relative to the dial radius
-pub const NEEDLE_BACK_LENGTH: f64 = 80.0; // Length of the needle extending behind the center
-pub const NEEDLE_WIDTH: f32 = 4.0; // Width of the needle
+impl Default for TickConfig {
+    fn default() -> Self {
+        Self {
+            num_ticks: 11,
+            minor_ticks_per_interval: 5,
+            major_length: 40,
+            minor_length: 25,
+            major_thickness: 2.0,
+            minor_thickness: 0.5,
+        }
+    }
+}
 
-pub const LERP_FACTOR: f64 = 0.1; // Speed of interpolation for smooth animations (0.0 = no movement, 1.0 = instant)
+/// Configuration for the main dial appearance
+#[derive(Debug, Clone)]
+pub struct DialConfig {
+    pub margin: i32,
+    pub thickness: i32,
+    pub numbers_font_size: f32,
+    pub ticks_to_numbers_distance: f64,
+}
 
-pub const READOUT_X_FACTOR: f64 = 0.69; // X position factor for the readout (relative to width)
-pub const READOUT_Y_FACTOR: f64 = 0.75; // Y position factor for the readout (relative to height)
-pub const READOUT_BIG_FONT_SIZE: f32 = 54.0; // Font size for the integer part of the readout
-pub const READOUT_SMALL_FONT_SIZE: f32 = 28.0; // Font size for the fractional part of the readout
+impl Default for DialConfig {
+    fn default() -> Self {
+        Self {
+            margin: 45,
+            thickness: 4,
+            numbers_font_size: 30.0,
+            ticks_to_numbers_distance: 30.0,
+        }
+    }
+}
 
-pub const READOUT_BOX_PADDING: i32 = 30; // Padding around the readout box
-pub const READOUT_BOX_THICKNESS: f32 = 4.0; // Thickness of the readout box lines
+/// Configuration for needle appearance and behavior
+#[derive(Debug, Clone)]
+pub struct NeedleConfig {
+    pub length_factor: f64,
+    pub back_length: f64,
+    pub width: f32,
+    pub lerp_factor: f64,
+}
 
-pub const WINDOW_WIDTH: usize = 350; // Width of the application window
-pub const WINDOW_HEIGHT: usize = 350; // Height of the application window
-pub const MAX_FRAMERATE: f64 = 60.0; // Maximum framerate (frames per second)
+impl Default for NeedleConfig {
+    fn default() -> Self {
+        Self {
+            length_factor: 1.05,
+            back_length: 80.0,
+            width: 4.0,
+            lerp_factor: 0.1,
+        }
+    }
+}
 
-pub const FONT_DATA: &[u8] = include_bytes!("BerkeleyMono-Regular.otf"); // Include the font file at compile time
-pub const EXCLAMATION_MARK_FONT_SIZE: f32 = 50.0; // Font size for the exclamation mark
+/// Configuration for the digital readout display
+#[derive(Debug, Clone)]
+pub struct ReadoutConfig {
+    pub x_factor: f64,
+    pub y_factor: f64,
+    pub big_font_size: f32,
+    pub small_font_size: f32,
+    pub box_padding: i32,
+    pub box_thickness: f32,
+}
 
-pub const DOT_RADIUS: i32 = 6; // Radius of the dot for the DOT crossbar type
+impl Default for ReadoutConfig {
+    fn default() -> Self {
+        Self {
+            x_factor: 0.69,
+            y_factor: 0.75,
+            big_font_size: 54.0,
+            small_font_size: 28.0,
+            box_padding: 30,
+            box_thickness: 4.0,
+        }
+    }
+}
 
-// Curved text configuration
-pub const CURVED_TEXT: &str = "INSTRUMENT GAUGE"; // Text to display curved at the top of the dial
-pub const CURVED_TEXT_FONT_SIZE: f32 = 30.0; // Font size for curved text
-pub const CURVED_TEXT_RADIUS_OFFSET: f64 = 15.0; // Distance from dial center to curved text (radius offset)
-pub const CURVED_TEXT_ARC_SPAN: f64 = std::f64::consts::PI * 0.23; // Angular span for the curved text (23% of PI)
-pub const CURVED_TEXT_ANGLE: f64 = 3.0 * std::f64::consts::PI / 2.0; // Center angle for the curved text (PI = top of dial, 0 = right, PI/2 = bottom, 3*PI/2 = left)
+/// Configuration for application window
+#[derive(Debug, Clone)]
+pub struct WindowConfig {
+    pub width: usize,
+    pub height: usize,
+    pub max_framerate: f64,
+}
 
-// Highlight band configuration
-pub const HIGHLIGHT_BAND_WIDTH: i32 = 35; // Width of the highlight band
-pub const HIGHLIGHT_COLOR: (u8, u8, u8) = (0xff, 0x00, 0x00); // Red color for the highlight band
-pub const HIGHLIGHT_ALPHA: f64 = 1.0; // Transparency for the highlight band
-pub const HIGHLIGHT_EDGE_SOFTNESS: f64 = 0.005; // Angular threshold for highlight edge anti-aliasing (in radians)
+impl Default for WindowConfig {
+    fn default() -> Self {
+        Self {
+            width: 300,
+            height: 300,
+            max_framerate: 60.0,
+        }
+    }
+}
 
-// Needle2 complication configuration
-pub const NEEDLE2_USE_COMPLICATION: bool = true; // Move needle2 to a smaller dial in the top middle like a watch complication
-pub const COMPLICATION_SHIFT: i32 = 130; // Vertical offset for the complication dial position (positive moves down)
-pub const COMPLICATION_SIZE: f64 = 7.0; // Size factor for the complication dial (radius = width.min(height) / COMPLICATION_SIZE)
+/// Configuration for fonts and text rendering
+#[derive(Debug, Clone)]
+pub struct FontConfig {
+    pub data: &'static [u8],
+    pub exclamation_mark_size: f32,
+    pub dot_radius: i32,
+}
 
-// Mini dial (complication) specific configuration
+impl Default for FontConfig {
+    fn default() -> Self {
+        Self {
+            data: include_bytes!("BerkeleyMono-Regular.otf"),
+            exclamation_mark_size: 50.0,
+            dot_radius: 6,
+        }
+    }
+}
+
+/// Configuration for curved text display
+#[derive(Debug, Clone)]
+pub struct CurvedTextConfig {
+    pub text: &'static str,
+    pub font_size: f32,
+    pub radius_offset: f64,
+    pub arc_span: f64,
+    pub angle: f64,
+}
+
+impl Default for CurvedTextConfig {
+    fn default() -> Self {
+        Self {
+            text: "INSTRUMENT GAUGE",
+            font_size: 30.0,  // Reduced from 60.0 for better rendering
+            radius_offset: 15.0,
+            arc_span: std::f64::consts::PI * 0.23,
+            angle: 3.0 * std::f64::consts::PI / 2.0,
+        }
+    }
+}
+
+/// Configuration for highlight band
+#[derive(Debug, Clone)]
+pub struct HighlightBandConfig {
+    pub width: i32,
+    pub color: Color,
+    pub alpha: f64,
+    pub edge_softness: f64,
+}
+
+impl Default for HighlightBandConfig {
+    fn default() -> Self {
+        Self {
+            width: 35,
+            color: Color::new(0xff, 0x00, 0x00),
+            alpha: 1.0,
+            edge_softness: 0.005,
+        }
+    }
+}
+
+/// Configuration for needle2 complication (mini dial)
+#[derive(Debug, Clone)]
+pub struct ComplicationConfig {
+    pub use_complication: bool,
+    pub shift: i32,
+    pub size: f64,
+}
+
+impl Default for ComplicationConfig {
+    fn default() -> Self {
+        Self {
+            use_complication: true,
+            shift: 130,
+            size: 7.0,
+        }
+    }
+}
+
+/// Main configuration struct containing all gauge settings
+#[derive(Debug, Clone)]
+pub struct Config {
+    pub ticks: TickConfig,
+    pub dial: DialConfig,
+    pub needle: NeedleConfig,
+    pub readout: ReadoutConfig,
+    pub window: WindowConfig,
+    pub font: FontConfig,
+    pub curved_text: CurvedTextConfig,
+    pub highlight_band: HighlightBandConfig,
+    pub complication: ComplicationConfig,
+    pub mini_dial: mini_dial::MiniDialFullConfig,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            ticks: TickConfig::default(),
+            dial: DialConfig::default(),
+            needle: NeedleConfig::default(),
+            readout: ReadoutConfig::default(),
+            window: WindowConfig::default(),
+            font: FontConfig::default(),
+            curved_text: CurvedTextConfig::default(),
+            highlight_band: HighlightBandConfig::default(),
+            complication: ComplicationConfig::default(),
+            mini_dial: mini_dial::MiniDialFullConfig::default(),
+        }
+    }
+}
+
+impl Config {
+    /// Create a new config with default values
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+/// Global configuration instance
+pub static CONFIG: std::sync::LazyLock<Config> = std::sync::LazyLock::new(|| Config::new());
+
+/// Mini dial (complication) configuration module
 pub mod mini_dial {
-    pub const NUM_TICKS: usize = 5; // Number of major ticks
-    pub const MINOR_TICKS_PER_INTERVAL: usize = 0; // Number of minor ticks between each major tick
-    pub const TICK_LENGTH: i32 = 10; // Length of major ticks
-    pub const MINOR_TICK_LENGTH: i32 = 4; // Length of minor ticks
-    pub const TICK_THICKNESS: f32 = 2.0; // Thickness of major ticks
-    pub const MINOR_TICK_THICKNESS: f32 = 0.5; // Thickness of minor ticks
 
-    pub const DIAL_MARGIN: i32 = 15; // Margin around the dial
-    pub const DIAL_THICKNESS: i32 = 2; // Thickness of the dial arc
+    /// Configuration for mini dial ticks
+    #[derive(Debug, Clone)]
+    pub struct MiniTickConfig {
+        pub num_ticks: usize,
+        pub minor_ticks_per_interval: usize,
+        pub major_length: i32,
+        pub minor_length: i32,
+        pub major_thickness: f32,
+        pub minor_thickness: f32,
+    }
 
-    pub const NEEDLE_LENGTH_FACTOR: f64 = 1.0; // Factor to scale the needle length relative to the dial radius
-    pub const NEEDLE_BACK_LENGTH: f64 = 30.0; // Length of the needle extending behind the center
-    pub const NEEDLE_WIDTH: f32 = 4.0; // Width of the needle
+    impl MiniTickConfig {
+        pub fn new() -> Self {
+            Self::default()
+        }
+    }
 
-    pub const DIAL_NUMBERS_FONT_SIZE: f32 = 30.0; // Font size for the dial numbers
-    pub const TICKS_TO_NUMBERS_DISTANCE: f64 = 30.0; // Distance between the ticks and the numbers on the dial
+    impl Default for MiniTickConfig {
+        fn default() -> Self {
+            Self {
+                num_ticks: 5,
+                minor_ticks_per_interval: 0,
+                major_length: 10,
+                minor_length: 4,
+                major_thickness: 2.0,
+                minor_thickness: 0.5,
+            }
+        }
+    }
 
-    pub const DOT_RADIUS: i32 = 8; // Radius of the dot for the DOT crossbar type
+    /// Configuration for mini dial appearance
+    #[derive(Debug, Clone)]
+    pub struct MiniDialConfig {
+        pub margin: i32,
+        pub thickness: i32,
+        pub numbers_font_size: f32,
+        pub ticks_to_numbers_distance: f64,
+        pub dot_radius: i32,
+    }
+
+    impl MiniDialConfig {
+        pub fn new() -> Self {
+            Self::default()
+        }
+    }
+
+    impl Default for MiniDialConfig {
+        fn default() -> Self {
+            Self {
+                margin: 15,
+                thickness: 2,
+                numbers_font_size: 30.0,
+                ticks_to_numbers_distance: 30.0,
+                dot_radius: 8,
+            }
+        }
+    }
+
+    /// Configuration for mini dial needle
+    #[derive(Debug, Clone)]
+    pub struct MiniNeedleConfig {
+        pub length_factor: f64,
+        pub back_length: f64,
+        pub width: f32,
+    }
+
+    impl MiniNeedleConfig {
+        pub fn new() -> Self {
+            Self::default()
+        }
+    }
+
+    impl Default for MiniNeedleConfig {
+        fn default() -> Self {
+            Self {
+                length_factor: 1.0,
+                back_length: 30.0,
+                width: 4.0,
+            }
+        }
+    }
+
+    /// Complete mini dial configuration
+    #[derive(Debug, Clone)]
+    pub struct MiniDialFullConfig {
+        pub ticks: MiniTickConfig,
+        pub dial: MiniDialConfig,
+        pub needle: MiniNeedleConfig,
+    }
+
+    impl MiniDialFullConfig {
+        pub fn new() -> Self {
+            Self::default()
+        }
+    }
+
+    impl Default for MiniDialFullConfig {
+        fn default() -> Self {
+            Self {
+                ticks: MiniTickConfig::default(),
+                dial: MiniDialConfig::default(),
+                needle: MiniNeedleConfig::default(),
+            }
+        }
+    }
 }
