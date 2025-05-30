@@ -9,7 +9,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = InstrumentConfig::builder()
         .minor_tick_length(15)
         .major_tick_length(15)
-        // Enable chronograph as a separate complication
+        .curved_text("instrument".to_string())
         .build();
 
     let mut instrument = Instrument::new(config);
